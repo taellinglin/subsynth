@@ -513,7 +513,7 @@ impl ClapPlugin for SubSynth {
 }
 
 impl Vst3Plugin for SubSynth {
-    const VST3_CLASS_ID: [u8; 16] = *b"SubSynthLingTLin";
+    const VST3_CLASS_ID: [u8; 16] = *b"SubSynthLing0Lin";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
         Vst3SubCategory::Instrument,
         Vst3SubCategory::Synth,

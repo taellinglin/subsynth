@@ -3,12 +3,18 @@ use nih_plug::prelude::{Editor, GuiContext};
 use nih_plug_iced::*;
 use nih_plug_iced::widgets as nih_widgets;
 use std::sync::Arc;
-
+use nih_plug_iced::widget::{Text};
+use nih_plug_iced::Color;
+use nih_plug_iced::widget::Space;
+use nih_plug_iced::Font;
+use nih_plug_iced::Length;
+use nih_plug_iced::widget::*;
 use crate::SubSynthParams;
 
-// Makes sense to also define this here, makes it a bit easier to keep track of
+// Remove impl TextStyle block
+
 pub(crate) fn default_state() -> Arc<IcedState> {
-    IcedState::from_size(400, 150)
+    IcedState::from_size(400, 300)
 }
 
 pub(crate) fn create(
@@ -73,20 +79,20 @@ impl IcedEditor for SubSynthEditor {
     }
 
     fn view(&mut self) -> Element<'_, Self::Message> {
+
         Column::new()
             .align_items(Alignment::Center)
             .push(
-                Text::new("SubSynth Interface")
-                    .font(assets::NOTO_SANS_LIGHT)
+                Text::new("SubSynth")
                     .size(40)
-                    .height(50.into())
+                    .height(Length::Units(40))
                     .width(Length::Fill)
                     .horizontal_alignment(alignment::Horizontal::Center)
                     .vertical_alignment(alignment::Vertical::Bottom),
             )
             .push(
                 Text::new("Gain")
-                    .height(20.into())
+                    .height(Length::Units(20))
                     .width(Length::Fill)
                     .horizontal_alignment(alignment::Horizontal::Center)
                     .vertical_alignment(alignment::Vertical::Center),
@@ -97,7 +103,7 @@ impl IcedEditor for SubSynthEditor {
             )
             .push(
                 Text::new("Waveform")
-                    .height(20.into())
+                    .height(Length::Units(20))
                     .width(Length::Fill)
                     .horizontal_alignment(alignment::Horizontal::Center)
                     .vertical_alignment(alignment::Vertical::Center),
@@ -108,7 +114,7 @@ impl IcedEditor for SubSynthEditor {
             )
             .push(
                 Text::new("Attack")
-                    .height(20.into())
+                    .height(Length::Units(20))
                     .width(Length::Fill)
                     .horizontal_alignment(alignment::Horizontal::Center)
                     .vertical_alignment(alignment::Vertical::Center),
@@ -119,7 +125,7 @@ impl IcedEditor for SubSynthEditor {
             )
             .push(
                 Text::new("Release")
-                    .height(20.into())
+                    .height(Length::Units(20))
                     .width(Length::Fill)
                     .horizontal_alignment(alignment::Horizontal::Center)
                     .vertical_alignment(alignment::Vertical::Center),
@@ -128,15 +134,15 @@ impl IcedEditor for SubSynthEditor {
                 nih_widgets::ParamSlider::new(&mut self.amp_release_ms_slider_state, &self.params.amp_release_ms)
                     .map(Message::ParamUpdate),
             )
-            .push(Space::with_height(10.into()))
+            .push(Space::new(Length::Units(0), Length::Units(10)))
             .into()
     }
 
     fn background_color(&self) -> nih_plug_iced::Color {
         nih_plug_iced::Color {
-            r: 0.98,
-            g: 0.98,
-            b: 0.98,
+            r: 0.82,
+            g: 0.82,
+            b: 0.82,
             a: 1.0,
         }
     }
