@@ -1,26 +1,39 @@
+mod waveform;
+mod editor;
 use nih_plug::prelude::*;
 use rand::Rng;
 use rand_pcg::Pcg32;
 use std::sync::Arc;
+use waveform::Waveform;
+use nih_plug::params::enums::EnumParam;
+use waveform::generate_waveform;
+use nih_plug_iced::IcedState;
 
 const NUM_VOICES: u32 = 16;
 const MAX_BLOCK_SIZE: usize = 64;
 const GAIN_POLY_MOD_ID: u32 = 0;
-struct PolyModSynth {
-    params: Arc<PolyModSynthParams>,
+
+struct SubSynth {
+    params: Arc<SubSynthParams>,
     prng: Pcg32,
     voices: [Option<Voice>; NUM_VOICES as usize],
     next_internal_voice_id: u64,
+    
 }
 
 #[derive(Params)]
-struct PolyModSynthParams {
+struct SubSynthParams {
+    #[persist = "editor-state"]
+    editor_state: Arc<IcedState>,
     #[id = "gain"]
     gain: FloatParam,
     #[id = "amp_atk"]
     amp_attack_ms: FloatParam,
     #[id = "amp_rel"]
     amp_release_ms: FloatParam,
+    #[id = "waveform"]
+    waveform: EnumParam<Waveform>,
+
 }
 
 #[derive(Debug, Clone)]
@@ -35,12 +48,14 @@ struct Voice {
     releasing: bool,
     amp_envelope: Smoother<f32>,
     voice_gain: Option<(f32, Smoother<f32>)>,
+    
 }
 
-impl Default for PolyModSynth {
+impl Default for SubSynth {
     fn default() -> Self {
         Self {
-            params: Arc::new(PolyModSynthParams::default()),
+            
+            params: Arc::new(SubSynthParams::default()),
 
             prng: Pcg32::new(420, 1337),
             voices: [0; NUM_VOICES as usize].map(|_| None),
@@ -49,9 +64,10 @@ impl Default for PolyModSynth {
     }
 }
 
-impl Default for PolyModSynthParams {
+impl Default for SubSynthParams {
     fn default() -> Self {
         Self {
+            editor_state: editor::default_state(),
             gain: FloatParam::new(
                 "Gain",
                 util::db_to_gain(-12.0),
@@ -76,6 +92,7 @@ impl Default for PolyModSynthParams {
             )
             .with_step_size(0.1)
             .with_unit(" ms"),
+            
             amp_release_ms: FloatParam::new(
                 "Release",
                 100.0,
@@ -87,11 +104,15 @@ impl Default for PolyModSynthParams {
             )
             .with_step_size(0.1)
             .with_unit(" ms"),
+            
+            waveform: EnumParam::new("Waveform", Waveform::Sine),
+
+            
         }
     }
 }
 
-impl Plugin for PolyModSynth {
+impl Plugin for SubSynth {
     const NAME: &'static str = "SubSynthBeta";
     const VENDOR: &'static str = "LingYue Synth";
     const URL: &'static str = "https://taellinglin.art";
@@ -113,6 +134,24 @@ impl Plugin for PolyModSynth {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create(
+            self.params.clone(),
+            self.params.editor_state.clone(),
+        )
+    }
+
+    fn initialize(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        _context: &mut impl InitContext<Self>,
+    ) -> bool {
+        // After `PEAK_METER_DECAY_MS` milliseconds of pure silence, the peak meter's value should
+        // have dropped by 12 dB
+
+        true
     }
 
     fn reset(&mut self) {
@@ -281,20 +320,21 @@ impl Plugin for PolyModSynth {
                     .amp_envelope
                     .next_block(&mut voice_amp_envelope, block_len);
     
+                
                 for (value_idx, sample_idx) in (block_start..block_end).enumerate() {
                     let amp = voice.velocity_sqrt * gain[value_idx] * voice_amp_envelope[value_idx];
-                    let sample = generate_waveform(waveform, voice.phase) * amp;
-    
+                    let waveform = self.params.waveform.value();
+                    let sample = generate_waveform(waveform, voice.phase) * amp;                
                     voice.phase += voice.phase_delta;
                     if voice.phase >= 1.0 {
                         voice.phase -= 1.0;
                     }
-    
+                
                     output[0][sample_idx] += sample;
                     output[1][sample_idx] += sample;
                 }
+                    
             }
-    
             // Process voice release and termination
             for voice in self.voices.iter_mut() {
                 match voice {
@@ -319,7 +359,7 @@ impl Plugin for PolyModSynth {
     }
 }    
 
-impl PolyModSynth {
+impl SubSynth {
     fn get_voice_idx(&mut self, voice_id: i32) -> Option<usize> {
         self.voices
             .iter_mut()
@@ -444,13 +484,17 @@ impl PolyModSynth {
             }
         }
     }
+    fn waveform(&self) -> Waveform {
+        self.params.waveform.value()
+    }
+    
 }
 
 const fn compute_fallback_voice_id(note: u8, channel: u8) -> i32 {
     note as i32 | ((channel as i32) << 16)
 }
 
-impl ClapPlugin for PolyModSynth {
+impl ClapPlugin for SubSynth {
     const CLAP_ID: &'static str = "art.taellinglin";
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("A Polyphonic Subtractive Synthesizer");
@@ -468,8 +512,8 @@ impl ClapPlugin for PolyModSynth {
     });
 }
 
-impl Vst3Plugin for PolyModSynth {
-    const VST3_CLASS_ID: [u8; 16] = *b"PolyM0dSynth1337";
+impl Vst3Plugin for SubSynth {
+    const VST3_CLASS_ID: [u8; 16] = *b"SubSynthLingTLin";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
         Vst3SubCategory::Instrument,
         Vst3SubCategory::Synth,
@@ -477,13 +521,6 @@ impl Vst3Plugin for PolyModSynth {
     ];
 }
 
-fn triangle_wave(phase: f32) -> f32 {
-    if phase <= 0.5 {
-        phase * 4.0 - 1.0
-    } else {
-        (1.0 - phase) * 4.0 - 1.0
-    }
-}
 
-nih_export_clap!(PolyModSynth);
-nih_export_vst3!(PolyModSynth);
+nih_export_clap!(SubSynth);
+nih_export_vst3!(SubSynth);

@@ -1,33 +1,31 @@
 use atomic_float::AtomicF32;
-use nih_plug::prelude::{util, Editor, GuiContext};
-use nih_plug_iced::widgets as nih_widgets;
+use nih_plug::prelude::{Editor, GuiContext};
 use nih_plug_iced::*;
+use nih_plug_iced::widgets as nih_widgets;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::SubSynthParams;
 
 // Makes sense to also define this here, makes it a bit easier to keep track of
 pub(crate) fn default_state() -> Arc<IcedState> {
-    IcedState::from_size(200, 150)
+    IcedState::from_size(400, 150)
 }
 
 pub(crate) fn create(
     params: Arc<SubSynthParams>,
-    peak_meter: Arc<AtomicF32>,
     editor_state: Arc<IcedState>,
 ) -> Option<Box<dyn Editor>> {
-    create_iced_editor::<SubSynthEditor>(editor_state, (params, peak_meter))
+    create_iced_editor::<SubSynthEditor>(editor_state, params)
 }
 
 struct SubSynthEditor {
-    params: Arc<SubSyntharams>,
+    params: Arc<SubSynthParams>,
     context: Arc<dyn GuiContext>,
 
-    peak_meter: Arc<AtomicF32>,
-
     gain_slider_state: nih_widgets::param_slider::State,
-    peak_meter_state: nih_widgets::peak_meter::State,
+    waveform_slider_state: nih_widgets::param_slider::State,
+    amp_attack_ms_slider_state: nih_widgets::param_slider::State,
+    amp_release_ms_slider_state: nih_widgets::param_slider::State,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -39,20 +37,20 @@ enum Message {
 impl IcedEditor for SubSynthEditor {
     type Executor = executor::Default;
     type Message = Message;
-    type InitializationFlags = (Arc<SubSynthParams>, Arc<AtomicF32>);
+    type InitializationFlags = Arc<SubSynthParams>;
 
     fn new(
-        (params, peak_meter): Self::InitializationFlags,
+        params: Self::InitializationFlags,
         context: Arc<dyn GuiContext>,
     ) -> (Self, Command<Self::Message>) {
         let editor = SubSynthEditor {
             params,
             context,
 
-            peak_meter,
-
             gain_slider_state: Default::default(),
-            peak_meter_state: Default::default(),
+            waveform_slider_state: Default::default(),
+            amp_attack_ms_slider_state: Default::default(),
+            amp_release_ms_slider_state: Default::default(),
         };
 
         (editor, Command::none())
@@ -131,13 +129,6 @@ impl IcedEditor for SubSynthEditor {
                     .map(Message::ParamUpdate),
             )
             .push(Space::with_height(10.into()))
-            .push(
-                nih_widgets::PeakMeter::new(
-                    &mut self.peak_meter_state,
-                    util::gain_to_db(self.peak_meter.load(std::sync::atomic::Ordering::Relaxed)),
-                )
-                .hold_time(Duration::from_millis(600)),
-            )
             .into()
     }
 

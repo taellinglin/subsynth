@@ -1269,6 +1269,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum-iterator"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7add3873b5dd076766ee79c8e406ad1a472c385476b9e38849f8eec24f1be689"
+dependencies = [
+ "enum-iterator-derive",
+]
+
+[[package]]
+name = "enum-iterator-derive"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eecf8589574ce9b895052fa12d69af7a233f99e6107f5cb8dd1044f2a17bfdcb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.15",
+]
+
+[[package]]
 name = "epaint"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3745,6 +3765,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinesynth"
+version = "0.1.0"
+dependencies = [
+ "enum-iterator",
+ "nih_plug",
+ "rand 0.8.5",
+ "rand_pcg 0.3.1",
+]
+
+[[package]]
 name = "siphasher"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3877,6 +3907,18 @@ name = "strsim"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+
+[[package]]
+name = "subsynth"
+version = "0.1.0"
+dependencies = [
+ "atomic_float",
+ "enum-iterator",
+ "nih_plug",
+ "nih_plug_iced",
+ "rand 0.8.5",
+ "rand_pcg 0.3.1",
+]
 
 [[package]]
 name = "swash"

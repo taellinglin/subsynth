@@ -131,14 +131,12 @@ impl Plugin for PolyModSynth {
         let num_samples = buffer.samples();
         let sample_rate = context.transport().sample_rate;
         let output = buffer.as_slice();
-    
+
         let mut next_event = context.next_event();
         let mut block_start: usize = 0;
         let mut block_end: usize = MAX_BLOCK_SIZE.min(num_samples);
-    
         while block_start < num_samples {
             let this_sample_internal_voice_id_start = self.next_internal_voice_id;
-    
             'events: loop {
                 match next_event {
                     Some(event) if (event.timing() as usize) <= block_start => {
@@ -156,7 +154,7 @@ impl Plugin for PolyModSynth {
                                 ));
                                 amp_envelope.reset(0.0);
                                 amp_envelope.set_target(sample_rate, 1.0);
-    
+
                                 let voice =
                                     self.start_voice(context, timing, voice_id, channel, note);
                                 voice.velocity_sqrt = velocity.sqrt();
@@ -189,7 +187,7 @@ impl Plugin for PolyModSynth {
                             } => {
                                 if let Some(voice_idx) = self.get_voice_idx(voice_id) {
                                     let voice = self.voices[voice_idx].as_mut().unwrap();
-    
+
                                     match poly_modulation_id {
                                         GAIN_POLY_MOD_ID => {
                                             let target_plain_value = self
@@ -208,11 +206,13 @@ impl Plugin for PolyModSynth {
                                             {
                                                 smoother.reset(target_plain_value);
                                             } else {
-                                                smoother.set_target(sample_rate, target_plain_value);
+                                                smoother
+                                                    .set_target(sample_rate, target_plain_value);
                                             }
                                         }
                                         n => nih_debug_assert_failure!(
-                                            "Polyphonic modulation sent for unknown poly modulation ID {}",
+                                            "Polyphonic modulation sent for unknown poly \
+                                             modulation ID {}",
                                             n
                                         ),
                                     }
@@ -238,7 +238,8 @@ impl Plugin for PolyModSynth {
                                             smoother.set_target(sample_rate, target_plain_value);
                                         }
                                         n => nih_debug_assert_failure!(
-                                            "Automation event sent for unknown poly modulation ID {}",
+                                            "Automation event sent for unknown poly modulation ID \
+                                             {}",
                                             n
                                         ),
                                     }
@@ -246,7 +247,7 @@ impl Plugin for PolyModSynth {
                             }
                             _ => (),
                         };
-    
+
                         next_event = context.next_event();
                     }
                     Some(event) if (event.timing() as usize) < block_end => {
@@ -256,18 +257,16 @@ impl Plugin for PolyModSynth {
                     _ => break 'events,
                 }
             }
-    
-            // Clear output buffer
             output[0][block_start..block_end].fill(0.0);
             output[1][block_start..block_end].fill(0.0);
-    
             let block_len = block_end - block_start;
             let mut gain = [0.0; MAX_BLOCK_SIZE];
             let mut voice_gain = [0.0; MAX_BLOCK_SIZE];
             let mut voice_amp_envelope = [0.0; MAX_BLOCK_SIZE];
             self.params.gain.smoothed.next_block(&mut gain, block_len);
-    
-            // Process voices
+
+            // TODO: Some form of band limiting
+            // TODO: Filter
             for voice in self.voices.iter_mut().filter_map(|v| v.as_mut()) {
                 let gain = match &voice.voice_gain {
                     Some((_, smoother)) => {
@@ -276,26 +275,23 @@ impl Plugin for PolyModSynth {
                     }
                     None => &gain,
                 };
-    
                 voice
                     .amp_envelope
                     .next_block(&mut voice_amp_envelope, block_len);
-    
+
                 for (value_idx, sample_idx) in (block_start..block_end).enumerate() {
                     let amp = voice.velocity_sqrt * gain[value_idx] * voice_amp_envelope[value_idx];
-                    let sample = generate_waveform(waveform, voice.phase) * amp;
-    
+                    let sample = triangle_wave(voice.phase) * amp;
+
                     voice.phase += voice.phase_delta;
                     if voice.phase >= 1.0 {
                         voice.phase -= 1.0;
                     }
-    
+
                     output[0][sample_idx] += sample;
                     output[1][sample_idx] += sample;
                 }
             }
-    
-            // Process voice release and termination
             for voice in self.voices.iter_mut() {
                 match voice {
                     Some(v) if v.releasing && v.amp_envelope.previous_value() == 0.0 => {
@@ -310,14 +306,13 @@ impl Plugin for PolyModSynth {
                     _ => (),
                 }
             }
-    
             block_start = block_end;
             block_end = (block_start + MAX_BLOCK_SIZE).min(num_samples);
         }
-    
+
         ProcessStatus::Normal
     }
-}    
+}
 
 impl PolyModSynth {
     fn get_voice_idx(&mut self, voice_id: i32) -> Option<usize> {

@@ -1,7 +1,11 @@
+mod waveform;
 use nih_plug::prelude::*;
 use rand::Rng;
 use rand_pcg::Pcg32;
 use std::sync::Arc;
+use waveform::Waveform;
+use nih_plug::params::enums::EnumParam;
+use waveform::generate_waveform;
 
 const NUM_VOICES: u32 = 16;
 const MAX_BLOCK_SIZE: usize = 64;
@@ -11,6 +15,7 @@ struct PolyModSynth {
     prng: Pcg32,
     voices: [Option<Voice>; NUM_VOICES as usize],
     next_internal_voice_id: u64,
+    
 }
 
 #[derive(Params)]
@@ -21,6 +26,9 @@ struct PolyModSynthParams {
     amp_attack_ms: FloatParam,
     #[id = "amp_rel"]
     amp_release_ms: FloatParam,
+    #[id = "waveform"]
+    waveform: EnumParam<Waveform>,
+
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +95,8 @@ impl Default for PolyModSynthParams {
             )
             .with_step_size(0.1)
             .with_unit(" ms"),
+            waveform: EnumParam::new("Waveform", Waveform::Sine),
+            
         }
     }
 }
@@ -281,20 +291,21 @@ impl Plugin for PolyModSynth {
                     .amp_envelope
                     .next_block(&mut voice_amp_envelope, block_len);
     
+                
                 for (value_idx, sample_idx) in (block_start..block_end).enumerate() {
                     let amp = voice.velocity_sqrt * gain[value_idx] * voice_amp_envelope[value_idx];
-                    let sample = generate_waveform(waveform, voice.phase) * amp;
-    
+                    let waveform = self.params.waveform.value();
+                    let sample = generate_waveform(waveform, voice.phase) * amp;                
                     voice.phase += voice.phase_delta;
                     if voice.phase >= 1.0 {
                         voice.phase -= 1.0;
                     }
-    
+                
                     output[0][sample_idx] += sample;
                     output[1][sample_idx] += sample;
                 }
+                    
             }
-    
             // Process voice release and termination
             for voice in self.voices.iter_mut() {
                 match voice {
@@ -444,6 +455,10 @@ impl PolyModSynth {
             }
         }
     }
+    fn waveform(&self) -> Waveform {
+        self.params.waveform.value()
+    }
+    
 }
 
 const fn compute_fallback_voice_id(note: u8, channel: u8) -> i32 {
