@@ -1,6 +1,5 @@
 mod waveform;
 mod editor;
-mod enums;
 mod filter;
 
 use nih_plug::prelude::*;
@@ -10,11 +9,9 @@ use std::sync::Arc;
 use waveform::Waveform;
 use waveform::generate_waveform;
 use filter::{NotchFilter, BandpassFilter, HighpassFilter, LowpassFilter, StatevariableFilter};
-//use filter::{Filter, FilterType, FilterFactory};
+use filter::{Filter, FilterType, FilterFactory};
 
 use filter::generate_filter;
-use filter::Filter;
-use filter::FilterType;
 
 use nih_plug_iced::IcedState;
 use nih_plug::params::enums::EnumParam;
@@ -85,8 +82,9 @@ struct Voice {
     releasing: bool,
     amp_envelope: Smoother<f32>,
     voice_gain: Option<(f32, Smoother<f32>)>,
-    filter_envelope: Smoother<f32>,
-    filter: EnumParam<FilterType>,
+    filter_cut_envelope: Smoother<f32>,
+    filter_res_envelope: Smoother<f32>,
+    filter: Option<FilterType>,
 
 }
 
@@ -525,7 +523,7 @@ impl Plugin for SubSynth {
                             sample_rate
                         );
                         filtered_sample.set_sample_rate(sample_rate);
-                        filtered_sample.process();
+                        filtered_sample.process(generated_sample.value() as f32);
                         // Update phase
                         voice.phase += voice.phase_delta;
                         if voice.phase >= 1.0 {
@@ -589,7 +587,9 @@ impl SubSynth {
             amp_envelope: Smoother::none(),
 
             voice_gain: None,
-            filter_envelope: Smoother::new(SmoothingStyle::Linear(0.0)),
+            filter_cut_envelope: Smoother::new(SmoothingStyle::Linear(0.0)),
+            filter_res_envelope: Smoother::new(SmoothingStyle::Linear(0.0)),
+
             filter: None,
         };
         self.next_internal_voice_id = self.next_internal_voice_id.wrapping_add(1);

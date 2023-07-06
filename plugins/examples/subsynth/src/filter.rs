@@ -1,6 +1,6 @@
 mod envelope;
-use envelope::ADSREnvelope;
-use envelope::Envelope;
+use ADSREnvelope;
+use Envelope;
 use nih_plug::params::enums::{Enum, EnumParam};
 use enum_iterator::Sequence;
 
@@ -55,7 +55,7 @@ pub struct HighpassFilter {
     prev_output: f32,
 }
 
-impl HighpassFilter {
+impl  HighpassFilter {
     pub fn new(cutoff: f32, cutoff_envelope: ADSREnvelope, resonance: f32, resonance_envelope: ADSREnvelope, sample_rate: f32) -> Self {
         HighpassFilter {
             cutoff,
@@ -67,8 +67,9 @@ impl HighpassFilter {
             prev_output: 0.0,
         }
     }
-
-    pub fn process(&mut self, input: f32) -> f32 {
+}
+impl Filter for HighpassFilter {
+    fn process(&mut self, input: f32) -> f32 {
         let cutoff = self.cutoff * self.cutoff_envelope.get_value();
         let resonance = self.resonance * self.resonance_envelope.get_value();
         let c = 1.0 / (2.0 * std::f32::consts::PI * cutoff / self.sample_rate);
@@ -78,8 +79,11 @@ impl HighpassFilter {
         self.prev_output = output;
         output
     }
-}
 
+    fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate;
+    }
+}
 pub struct BandpassFilter {
     cutoff: f32,
     resonance: f32,
@@ -102,8 +106,9 @@ impl BandpassFilter {
             prev_output: 0.0,
         }
     }
-
-    pub fn process(&mut self, input: f32) -> f32 {
+}
+impl Filter for BandpassFilter {
+    fn process(&mut self, input: f32) -> f32 {
         let cutoff = self.cutoff * self.cutoff_envelope.get_value();
         let resonance = self.resonance * self.resonance_envelope.get_value();
         let c = 1.0 / (2.0 * std::f32::consts::PI * cutoff / self.sample_rate);
@@ -113,8 +118,11 @@ impl BandpassFilter {
         self.prev_output = output;
         output
     }
-}
 
+    fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate;
+    }
+}
 pub struct LowpassFilter {
     cutoff: f32,
     resonance: f32,
@@ -135,8 +143,10 @@ impl LowpassFilter {
             prev_output: 0.0,
         }
     }
+}
 
-    pub fn process(&mut self, input: f32) -> f32 {
+impl Filter for LowpassFilter {
+    fn process(&mut self, input: f32) -> f32 {
         let cutoff = self.cutoff * self.cutoff_envelope.get_value();
         let resonance = self.resonance * self.resonance_envelope.get_value();
 
@@ -147,8 +157,11 @@ impl LowpassFilter {
         self.prev_output = output;
         output
     }
-}
 
+    fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate;
+    }
+}
 
 
 pub struct NotchFilter {
@@ -173,8 +186,10 @@ impl NotchFilter {
             prev_output: 0.0,
         }
     }
+}
 
-    pub fn process(&mut self, input: f32) -> f32 {
+impl Filter for NotchFilter {
+    fn process(&mut self, input: f32) -> f32 {
         let cutoff = self.cutoff * self.cutoff_envelope.get_value();
         let resonance = self.resonance * self.resonance_envelope.get_value();
         let c = 1.0 / (2.0 * std::f32::consts::PI * cutoff / self.sample_rate);
@@ -183,6 +198,10 @@ impl NotchFilter {
         self.prev_input = input;
         self.prev_output = output;
         output
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate;
     }
 }
 
@@ -197,8 +216,7 @@ pub struct StatevariableFilter {
     highpass_output: f32,
     bandpass_output: f32,
 }
-
-impl StatevariableFilter {
+impl Statevariable {
     pub fn new(cutoff: f32, cutoff_envelope: ADSREnvelope, resonance: f32, resonance_envelope: ADSREnvelope, sample_rate: f32) -> Self {
         StatevariableFilter {
             cutoff,
@@ -212,6 +230,10 @@ impl StatevariableFilter {
             bandpass_output: 0.0,
         }
     }
+}
+
+impl Filter for StatevariableFilter {
+
     pub fn process(&mut self, input: f32) -> f32 {
         let cutoff = self.cutoff * self.cutoff_envelope.get_value();
         let resonance = self.resonance * self.resonance_envelope.get_value();
@@ -232,7 +254,7 @@ impl StatevariableFilter {
 
         bp_output
     }
-    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+    fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
     }
 }
@@ -240,11 +262,21 @@ impl StatevariableFilter {
 pub fn generate_filter(
     filter_type: FilterType,
     cutoff: f32,
-    cutoff_envelope: ADSREnvelope,
     resonance: f32,
-    resonance_envelope: ADSREnvelope,
+    cutoff_attack: f32,
+    cutoff_decay: f32,
+    cutoff_sustain: f32,
+    cutoff_release: f32,
+    resonance_attack: f32,
+    resonance_decay: f32,
+    resonance_sustain: f32,
+    resonance_release: f32,
+    generated_sample: f32,
     sample_rate: f32,
 ) -> Box<dyn Filter> {
+    let cutoff_envelope = ADSREnvelope::new(cutoff_attack, cutoff_decay, cutoff_sustain, cutoff_release, sample_rate);
+    let resonance_envelope = ADSREnvelope::new(resonance_attack, resonance_decay, resonance_sustain, resonance_release, sample_rate);
+
     match filter_type {
         FilterType::Lowpass => Box::new(LowpassFilter::new(cutoff, cutoff_envelope, resonance, resonance_envelope, sample_rate)),
         FilterType::Bandpass => Box::new(BandpassFilter::new(cutoff, cutoff_envelope, resonance, resonance_envelope, sample_rate)),
