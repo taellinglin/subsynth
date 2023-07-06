@@ -1,38 +1,27 @@
 mod waveform;
-mod filter;
-mod envelope;
 mod editor;
 mod enums;
+mod filter;
+
 use nih_plug::prelude::*;
 use rand::Rng;
 use rand_pcg::Pcg32;
 use std::sync::Arc;
 use waveform::Waveform;
-use crate::filter::NotchFilter;
-use crate::filter::BandpassFilter;
-use crate::filter::HighpassFilter;
-use crate::filter::LowpassFilter;
-use crate::filter::StatevariableFilter;
-//use filter::Filter;
 use waveform::generate_waveform;
+use filter::{NotchFilter, BandpassFilter, HighpassFilter, LowpassFilter, StatevariableFilter};
+//use filter::{Filter, FilterType, FilterFactory};
+
 use filter::generate_filter;
-use filter::FilterType;
-use filter::FilterFactory;
 use filter::Filter;
+use filter::FilterType;
+
 use nih_plug_iced::IcedState;
 use nih_plug::params::enums::EnumParam;
+
 const NUM_VOICES: u32 = 16;
 const MAX_BLOCK_SIZE: usize = 64;
 const GAIN_POLY_MOD_ID: u32 = 0;
-#[derive(Debug, Clone)]
-enum FilterList {
-    Lowpass(LowpassFilter),
-    Bandpass(BandpassFilter),
-    Highpass(HighpassFilter),
-    Notch(NotchFilter),
-    Statevariable(StatevariableFilter),
-    // Add other filter types as needed
-}
 
 struct SubSynth {
     params: Arc<SubSynthParams>,
@@ -97,7 +86,7 @@ struct Voice {
     amp_envelope: Smoother<f32>,
     voice_gain: Option<(f32, Smoother<f32>)>,
     filter_envelope: Smoother<f32>,
-    filter: Option<FilterList>,
+    filter: EnumParam<FilterType>,
 
 }
 
@@ -535,8 +524,8 @@ impl Plugin for SubSynth {
                             generated_sample,
                             sample_rate
                         );
-                        filtered_sample.set_sample_rate(sample_rate)
-                        filtered_sample.process()
+                        filtered_sample.set_sample_rate(sample_rate);
+                        filtered_sample.process();
                         // Update phase
                         voice.phase += voice.phase_delta;
                         if voice.phase >= 1.0 {
@@ -734,8 +723,6 @@ impl Vst3Plugin for SubSynth {
         Vst3SubCategory::Synth,
         Vst3SubCategory::Stereo,
     ];
-    type AudioProcessor = SubSynthProcessor;
-    type Worker = SubSynthWorker;
 }
 
 

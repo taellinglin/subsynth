@@ -1,34 +1,56 @@
-// Import required modules and traits
+//use atomic_float::AtomicF32;
 use nih_plug::prelude::{Editor, GuiContext};
 use nih_plug_iced::*;
 use nih_plug_iced::widgets as nih_widgets;
 use std::sync::Arc;
-use nih_plug_iced::widget::{Text, Row, Column, XYPad, Envelope};
+use nih_plug_iced::widget::{Text};
+//use nih_plug_iced::Color;
+use nih_plug_iced::widget::Space;
+//use nih_plug_iced::Font;
 use nih_plug_iced::Length;
+//use nih_plug_iced::widget::*;
 use crate::SubSynthParams;
 
-// Define the SubSynthEditor struct
+// Remove impl TextStyle block
+
+pub(crate) fn default_state() -> Arc<IcedState> {
+    IcedState::from_size(400, 800)
+}
+
+pub(crate) fn create(
+    params: Arc<SubSynthParams>,
+    editor_state: Arc<IcedState>,
+) -> Option<Box<dyn Editor>> {
+    create_iced_editor::<SubSynthEditor>(editor_state, params)
+}
+
 struct SubSynthEditor {
     params: Arc<SubSynthParams>,
     context: Arc<dyn GuiContext>,
 
     gain_slider_state: nih_widgets::param_slider::State,
-    filter_cutoff_state: nih_widgets::xy_pad::State,
-    filter_resonance_state: nih_widgets::xy_pad::State,
-    amp_envelope_state: nih_widgets::envelope::State,
-    filter_cutoff_envelope_state: nih_widgets::envelope::State,
-    filter_resonance_envelope_state: nih_widgets::envelope::State,
+    waveform_slider_state: nih_widgets::param_slider::State,
+    amp_attack_ms_slider_state: nih_widgets::param_slider::State,
+    amp_release_ms_slider_state: nih_widgets::param_slider::State,
+    amp_decay_ms_slider_state: nih_widgets::param_slider::State,
+    amp_sustain_ms_slider_state: nih_widgets::param_slider::State,
+    filter_cut_attack_ms_slider_state: nih_widgets::param_slider::State,
+    filter_cut_decay_ms_slider_state: nih_widgets::param_slider::State,
+    filter_cut_sustain_ms_slider_state: nih_widgets::param_slider::State,
+    filter_cut_release_ms_slider_state: nih_widgets::param_slider::State,
+    filter_res_attack_ms_slider_state: nih_widgets::param_slider::State,
+    filter_res_decay_ms_slider_state: nih_widgets::param_slider::State,
+    filter_res_sustain_ms_slider_state: nih_widgets::param_slider::State,
+    filter_type_slider_state: nih_widgets::param_slider::State,
+    filter_cut_slider_state: nih_widgets::param_slider::State,
+    filter_res_slider_state: nih_widgets::param_slider::State,
 }
 
-// Define the Message enum for handling UI events
+
 #[derive(Debug, Clone, Copy)]
 enum Message {
     /// Update a parameter's value.
     ParamUpdate(nih_widgets::ParamMessage),
-    /// Update the X/Y values of the filter cutoff/resonance pad.
-    PadUpdate(nih_widgets::xy_pad::Message),
-    /// Update the envelope values.
-    EnvelopeUpdate(nih_widgets::envelope::Message),
 }
 
 impl IcedEditor for SubSynthEditor {
@@ -44,15 +66,27 @@ impl IcedEditor for SubSynthEditor {
             params,
             context,
             gain_slider_state: Default::default(),
-            filter_cutoff_state: Default::default(),
-            filter_resonance_state: Default::default(),
-            amp_envelope_state: Default::default(),
-            filter_cutoff_envelope_state: Default::default(),
-            filter_resonance_envelope_state: Default::default(),
+            waveform_slider_state: Default::default(),
+            amp_attack_ms_slider_state: Default::default(),
+            amp_release_ms_slider_state: Default::default(),
+            amp_decay_ms_slider_state: Default::default(),
+            amp_sustain_ms_slider_state: Default::default(),
+            filter_cut_attack_ms_slider_state: Default::default(),
+            filter_cut_decay_ms_slider_state: Default::default(),
+            filter_cut_sustain_ms_slider_state: Default::default(),
+            filter_cut_release_ms_slider_state: Default::default(),
+            filter_res_attack_ms_slider_state: Default::default(),
+            filter_res_decay_ms_slider_state: Default::default(),
+            filter_res_sustain_ms_slider_state: Default::default(),
+            filter_type_slider_state: Default::default(),
+            filter_cut_slider_state: Default::default(),
+            filter_res_slider_state: Default::default(),
         };
-
+        
+    
         (editor, Command::none())
     }
+    
 
     fn context(&self) -> &dyn GuiContext {
         self.context.as_ref()
@@ -65,8 +99,6 @@ impl IcedEditor for SubSynthEditor {
     ) -> Command<Self::Message> {
         match message {
             Message::ParamUpdate(message) => self.handle_param_message(message),
-            Message::PadUpdate(message) => self.handle_pad_message(message),
-            Message::EnvelopeUpdate(message) => self.handle_envelope_message(message),
         }
 
         Command::none()
@@ -84,96 +116,193 @@ impl IcedEditor for SubSynthEditor {
                     .vertical_alignment(alignment::Vertical::Bottom),
             )
             .push(
-                Row::new()
-                    .spacing(20)
-                    .push(
-                        Column::new()
-                            .spacing(10)
-                            .push(
-                                Text::new("Gain")
-                                    .height(Length::Units(20))
-                                    .width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center)
-                                    .vertical_alignment(alignment::Vertical::Center),
-                            )
-                            .push(
-                                Text::new("Filter Cutoff")
-                                    .height(Length::Units(20))
-                                    .width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center)
-                                    .vertical_alignment(alignment::Vertical::Center),
-                            )
-                            .push(
-                                nih_widgets::XYPad::new(&mut self.filter_cutoff_state, &self.params.filter_cutoff)
-                                    .map(Message::PadUpdate),
-                            )
-                            .push(
-                                Text::new("Filter Resonance")
-                                    .height(Length::Units(20))
-                                    .width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center)
-                                    .vertical_alignment(alignment::Vertical::Center),
-                            )
-                            .push(
-                                nih_widgets::XYPad::new(&mut self.filter_resonance_state, &self.params.filter_resonance)
-                                    .map(Message::PadUpdate),
-                            ),
-                    )
-                    .push(
-                        Column::new()
-                            .spacing(10)
-                            .push(
-                                Text::new("Amp Envelope")
-                                    .height(Length::Units(20))
-                                    .width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center)
-                                    .vertical_alignment(alignment::Vertical::Center),
-                            )
-                            .push(
-                                nih_widgets::Envelope::new(&mut self.amp_envelope_state, &self.params.amp_envelope)
-                                    .map(Message::EnvelopeUpdate),
-                            )
-                            .push(Space::with_height(Length::Units(20)))
-                            .push(
-                                Text::new("Filter Cutoff Envelope")
-                                    .height(Length::Units(20))
-                                    .width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center)
-                                    .vertical_alignment(alignment::Vertical::Center),
-                            )
-                            .push(
-                                nih_widgets::Envelope::new(&mut self.filter_cutoff_envelope_state, &self.params.filter_cutoff_envelope)
-                                    .map(Message::EnvelopeUpdate),
-                            )
-                            .push(Space::with_height(Length::Units(20)))
-                            .push(
-                                Text::new("Filter Resonance Envelope")
-                                    .height(Length::Units(20))
-                                    .width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center)
-                                    .vertical_alignment(alignment::Vertical::Center),
-                            )
-                            .push(
-                                nih_widgets::Envelope::new(&mut self.filter_resonance_envelope_state, &self.params.filter_resonance_envelope)
-                                    .map(Message::EnvelopeUpdate),
-                            ),
-                    ),
+                Text::new("Gain")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
             )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.gain_slider_state, &self.params.gain)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Waveform")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.waveform_slider_state, &self.params.waveform)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Attack")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.amp_attack_ms_slider_state, &self.params.amp_attack_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Decay")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.amp_decay_ms_slider_state, &self.params.amp_decay_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Sustain")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.amp_sustain_ms_slider_state, &self.params.amp_sustain_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Release")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.amp_release_ms_slider_state, &self.params.amp_release_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Type")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_type_slider_state, &self.params.filter_type)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Cut")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_cut_slider_state, &self.params.filter_cut)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Res")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_res_slider_state, &self.params.filter_res)
+                    .map(Message::ParamUpdate),
+            )
+            
+            .push(
+                Text::new("Filter Cut Attack")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_cut_attack_ms_slider_state, &self.params.filter_cut_attack_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Cut Decay")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_cut_decay_ms_slider_state, &self.params.filter_cut_decay_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Cut Sustain")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_cut_sustain_ms_slider_state, &self.params.filter_cut_sustain_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Cut Release")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_cut_release_ms_slider_state, &self.params.filter_cut_release_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Resonance Attack")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_res_attack_ms_slider_state, &self.params.filter_res_attack_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Resonance Decay")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_res_decay_ms_slider_state, &self.params.filter_res_decay_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(
+                Text::new("Filter Resonance Sustain")
+                    .height(Length::Units(20))
+                    .width(Length::Fill)
+                    .horizontal_alignment(alignment::Horizontal::Center)
+                    .vertical_alignment(alignment::Vertical::Center),
+            )
+            .push(
+                nih_widgets::ParamSlider::new(&mut self.filter_res_sustain_ms_slider_state, &self.params.filter_res_sustain_ms)
+                    .map(Message::ParamUpdate),
+            )
+            .push(Space::new(Length::Units(0), Length::Units(10)))
             .into()
     }
-}
+    
 
-impl SubSynthEditor {
-    // Implement the methods for handling parameter updates, pad updates, and envelope updates
-    fn handle_param_message(&mut self, message: nih_widgets::ParamMessage) {
-        // Handle the parameter update message
-    }
-
-    fn handle_pad_message(&mut self, message: nih_widgets::xy_pad::Message) {
-        // Handle the pad update message
-    }
-
-    fn handle_envelope_message(&mut self, message: nih_widgets::envelope::Message) {
-        // Handle the envelope update message
+    fn background_color(&self) -> nih_plug_iced::Color {
+        nih_plug_iced::Color {
+            r: 0.82,
+            g: 0.82,
+            b: 0.82,
+            a: 1.0,
+        }
     }
 }
