@@ -507,7 +507,7 @@ impl Plugin for SubSynth {
                         let resonance_release = self.params.filter_res_release_ms.value();
                         let sample_rate = context.transport().sample_rate;
                     
-                        let filtered_sample = generate_filter(
+                        let mut filtered_sample = generate_filter(
                             filter_type,
                             cutoff,
                             resonance,
