@@ -1,17 +1,38 @@
 mod waveform;
+mod filter;
+mod envelope;
 mod editor;
+mod enums;
 use nih_plug::prelude::*;
 use rand::Rng;
 use rand_pcg::Pcg32;
 use std::sync::Arc;
 use waveform::Waveform;
-use nih_plug::params::enums::EnumParam;
+use crate::filter::NotchFilter;
+use crate::filter::BandpassFilter;
+use crate::filter::HighpassFilter;
+use crate::filter::LowpassFilter;
+use crate::filter::StatevariableFilter;
+//use filter::Filter;
 use waveform::generate_waveform;
+use filter::generate_filter;
+use filter::FilterType;
+use filter::FilterFactory;
+use filter::Filter;
 use nih_plug_iced::IcedState;
-
+use nih_plug::params::enums::EnumParam;
 const NUM_VOICES: u32 = 16;
 const MAX_BLOCK_SIZE: usize = 64;
 const GAIN_POLY_MOD_ID: u32 = 0;
+#[derive(Debug, Clone)]
+enum FilterList {
+    Lowpass(LowpassFilter),
+    Bandpass(BandpassFilter),
+    Highpass(HighpassFilter),
+    Notch(NotchFilter),
+    Statevariable(StatevariableFilter),
+    // Add other filter types as needed
+}
 
 struct SubSynth {
     params: Arc<SubSynthParams>,
@@ -34,6 +55,33 @@ struct SubSynthParams {
     #[id = "waveform"]
     waveform: EnumParam<Waveform>,
 
+    // New parameters for ADSR envelope
+    #[id = "amp_dec"]
+    amp_decay_ms: FloatParam,
+    #[id = "amp_sus"]
+    amp_sustain_ms: FloatParam,
+    #[id = "filter_cut_atk"]
+    filter_cut_attack_ms: FloatParam,
+    #[id = "filter_cut_dec"]
+    filter_cut_decay_ms: FloatParam,
+    #[id = "filter_cut_sus"]
+    filter_cut_sustain_ms: FloatParam,
+    #[id = "filter_cut_rel"]
+    filter_cut_release_ms: FloatParam,
+    #[id = "filter_res_atk"]
+    filter_res_attack_ms: FloatParam,
+    #[id = "filter_res_dec"]
+    filter_res_decay_ms: FloatParam,
+    #[id = "filter_res_sus"]
+    filter_res_sustain_ms: FloatParam,
+    #[id = "filter_res_rel"]
+    filter_res_release_ms: FloatParam,
+    #[id = "filter_type"]
+    filter_type: EnumParam<FilterType>,
+    #[id = "filter_cut"]
+    filter_cut: FloatParam,
+    #[id = "filter_res"]
+    filter_res: FloatParam,
 }
 
 #[derive(Debug, Clone)]
@@ -48,8 +96,11 @@ struct Voice {
     releasing: bool,
     amp_envelope: Smoother<f32>,
     voice_gain: Option<(f32, Smoother<f32>)>,
-    
+    filter_envelope: Smoother<f32>,
+    filter: Option<FilterList>,
+
 }
+
 
 impl Default for SubSynth {
     fn default() -> Self {
@@ -92,7 +143,6 @@ impl Default for SubSynthParams {
             )
             .with_step_size(0.1)
             .with_unit(" ms"),
-            
             amp_release_ms: FloatParam::new(
                 "Release",
                 100.0,
@@ -104,13 +154,141 @@ impl Default for SubSynthParams {
             )
             .with_step_size(0.1)
             .with_unit(" ms"),
-            
             waveform: EnumParam::new("Waveform", Waveform::Sine),
-
-            
+            amp_decay_ms: FloatParam::new(
+                "Decay",
+                200.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            amp_sustain_ms: FloatParam::new(
+                "Sustain",
+                1000.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 5000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            filter_type: EnumParam::new("Filter Type", FilterType::Lowpass),
+            filter_cut: FloatParam::new(
+                "Filter Cut",
+                10000.0,
+                FloatRange::Linear {
+                    min: 20.0,
+                    max: 20000.0,
+                },
+            )
+            .with_unit(" Hz"),
+            filter_res: FloatParam::new(
+                "Filter Resonance",
+                0.5,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 1.0,
+                },
+            )
+            .with_unit(""),
+            filter_cut_attack_ms: FloatParam::new(
+                "Filter Cut Attack",
+                200.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            filter_cut_decay_ms: FloatParam::new(
+                "Filter Cut Decay",
+                200.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            filter_cut_sustain_ms: FloatParam::new(
+                "Filter Cut Sustain",
+                1000.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 5000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            filter_cut_release_ms: FloatParam::new(
+                "Filter Cut Release",
+                100.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            filter_res_attack_ms: FloatParam::new(
+                "Filter Resonance Attack",
+                200.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            filter_res_decay_ms: FloatParam::new(
+                "Filter Resonance Decay",
+                200.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            filter_res_sustain_ms: FloatParam::new(
+                "Filter Resonance Sustain",
+                1000.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 5000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
+            filter_res_release_ms: FloatParam::new(
+                "Filter Resonance Decay",
+                200.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.1)
+            .with_unit(" ms"),
         }
     }
 }
+
+
 
 impl Plugin for SubSynth {
     const NAME: &'static str = "SubSynthBeta";
@@ -321,18 +499,53 @@ impl Plugin for SubSynth {
                     .next_block(&mut voice_amp_envelope, block_len);
     
                 
-                for (value_idx, sample_idx) in (block_start..block_end).enumerate() {
-                    let amp = voice.velocity_sqrt * gain[value_idx] * voice_amp_envelope[value_idx];
-                    let waveform = self.params.waveform.value();
-                    let sample = generate_waveform(waveform, voice.phase) * amp;                
-                    voice.phase += voice.phase_delta;
-                    if voice.phase >= 1.0 {
-                        voice.phase -= 1.0;
+                    for (value_idx, sample_idx) in (block_start..block_end).enumerate() {
+                        let amp = voice.velocity_sqrt * gain[value_idx] * voice_amp_envelope[value_idx];
+                    
+                        // Generate waveform
+                        let waveform = self.params.waveform.value();
+                        let generated_sample = generate_waveform(waveform, voice.phase) * amp;
+                    
+                        // Apply filter
+                        let filter_type = self.params.filter_type.value();
+                        let cutoff = self.params.filter_cut.value();
+                        let resonance = self.params.filter_res.value();
+                        let cutoff_attack = self.params.filter_cut_attack_ms.value();
+                        let cutoff_decay = self.params.filter_cut_decay_ms.value();
+                        let cutoff_sustain = self.params.filter_cut_sustain_ms.value();
+                        let cutoff_release = self.params.filter_cut_release_ms.value();
+                        let resonance_attack = self.params.filter_res_attack_ms.value();
+                        let resonance_decay = self.params.filter_res_decay_ms.value();
+                        let resonance_sustain = self.params.filter_res_sustain_ms.value();
+                        let resonance_release = self.params.filter_res_release_ms.value();
+                        let sample_rate = context.transport().sample_rate;
+                    
+                        let filtered_sample = generate_filter(
+                            filter_type,
+                            cutoff,
+                            resonance,
+                            cutoff_attack,
+                            cutoff_decay,
+                            cutoff_sustain,
+                            cutoff_release,
+                            resonance_attack,
+                            resonance_decay,
+                            resonance_sustain,
+                            resonance_release,
+                            generated_sample,
+                            sample_rate
+                        );
+                        filtered_sample.set_sample_rate(sample_rate)
+                        filtered_sample.process()
+                        // Update phase
+                        voice.phase += voice.phase_delta;
+                        if voice.phase >= 1.0 {
+                            voice.phase -= 1.0;
+                        }
+                    
+                        output[0][sample_idx] += filtered_sample;
+                        output[1][sample_idx] += filtered_sample;
                     }
-                
-                    output[0][sample_idx] += sample;
-                    output[1][sample_idx] += sample;
-                }
                     
             }
             // Process voice release and termination
@@ -387,6 +600,8 @@ impl SubSynth {
             amp_envelope: Smoother::none(),
 
             voice_gain: None,
+            filter_envelope: Smoother::new(SmoothingStyle::Linear(0.0)),
+            filter: None,
         };
         self.next_internal_voice_id = self.next_internal_voice_id.wrapping_add(1);
 
@@ -519,6 +734,8 @@ impl Vst3Plugin for SubSynth {
         Vst3SubCategory::Synth,
         Vst3SubCategory::Stereo,
     ];
+    type AudioProcessor = SubSynthProcessor;
+    type Worker = SubSynthWorker;
 }
 
 

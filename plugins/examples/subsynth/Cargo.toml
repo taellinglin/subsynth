@@ -14,6 +14,7 @@ nih_plug = { path = "../../../", features = ["assert_process_allocs"] }
 nih_plug_iced = { path = "../../../nih_plug_iced" }
 enum-iterator = "1.4.1"
 atomic_float = "0.1"
+iced_audio = "0.8"
 
 rand = "0.8.5"
 rand_pcg = "0.3.1"
