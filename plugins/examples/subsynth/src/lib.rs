@@ -520,19 +520,21 @@ impl Plugin for SubSynth {
                             resonance_sustain,
                             resonance_release,
                             generated_sample,
-                            sample_rate
+                            sample_rate,
                         );
                         filtered_sample.set_sample_rate(sample_rate);
-                        filtered_sample.process(generated_sample.value() as f32);
+                        let processed_sample = filtered_sample.process(generated_sample);
+                    
                         // Update phase
                         voice.phase += voice.phase_delta;
                         if voice.phase >= 1.0 {
                             voice.phase -= 1.0;
                         }
                     
-                        output[0][sample_idx] += filtered_sample;
-                        output[1][sample_idx] += filtered_sample;
+                        output[0][sample_idx] += processed_sample;
+                        output[1][sample_idx] += processed_sample;
                     }
+                    
                     
             }
             // Process voice release and termination
