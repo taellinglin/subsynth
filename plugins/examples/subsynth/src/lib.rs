@@ -12,7 +12,7 @@ use std::sync::Arc;
 use waveform::Waveform;
 use waveform::generate_waveform;
 use filter::{NotchFilter, BandpassFilter, HighpassFilter, LowpassFilter, StatevariableFilter};
-use filter::{Filter, FilterType, FilterFactory, Envelope};
+use filter::{Filter, FilterType, FilterFactory, Envelope, ADSREnvelope};
 
 
 use filter::generate_filter;
@@ -115,9 +115,9 @@ struct Voice {
     amp_envelope: Smoother<f32>,
     voice_gain: Option<(f32, Smoother<f32>)>,
     cutoff: Option<(f32, Smoother<f32>)>,
-    cutoff_envelope: Smoother<f32>,
+    cutoff_envelope: ADSREnvelope,
     resonance: Option<(f32, Smoother<f32>)>,
-    resonance_envelope: Smoother<f32>,
+    resonance_envelope: ADSREnvelope,
     filter: Option<FilterType>,
     pitch_bend: f32,
 
@@ -361,7 +361,7 @@ impl Plugin for SubSynth {
         self.next_internal_voice_id = 0;
     }
 
-    fn process_events(
+    pub fn process_events(
         &mut self,
         context: &mut impl ProcessContext<Self>,
         block_start: usize,
@@ -374,30 +374,43 @@ impl Plugin for SubSynth {
             match next_event {
                 Some(event) if (event.timing() as usize) <= block_start => {
                     match event {
-                        NoteEvent::NoteOn { timing, voice_id, channel, note, velocity } => {
+                        NoteEvent::NoteOn {
+                            timing,
+                            voice_id,
+                            channel,
+                            note,
+                            velocity,
+                        } => {
                             let initial_phase: f32 = self.prng.gen();
                             // Calculate amplitude for each channel based on velocity and panning
-                            let amp_left = velocity as f32 * (1.0 - panning);
-                            let amp_right = velocity as f32 * panning;
+                            let amp_left = velocity as f32 * (1.0 - voice.channel_panning);
+                            let amp_right = velocity as f32 * voice.channel_panning;
     
-                            let amp_envelope = Smoother::new(SmoothingStyle::Exponential(
+                            let amp_envelope = ADSREnvelope::new(
                                 self.params.amp_attack_ms.value(),
-                            ));
-                            amp_envelope.reset(0.0);
-                            amp_envelope.set_target(sample_rate, 1.0);
+                                self.params.amp_decay_ms.value(),
+                                self.params.amp_sustain.value(),
+                                self.params.amp_release_ms.value(),
+                            );
+                            amp_envelope.trigger();
     
                             // Start the voice and set parameters
-                            let voice = self.start_voice(context, timing, voice_id, channel, note);
+                            let voice = self.start_voice(
+                                context,
+                                timing,
+                                voice_id,
+                                channel,
+                                note,
+                                amp_envelope,
+                            );
                             voice.velocity_sqrt = velocity.sqrt();
                             voice.phase = initial_phase;
                             voice.phase_delta = util::midi_note_to_freq(note) / sample_rate;
-                            voice.amp_envelope = amp_envelope;
     
                             // Set channel gains
                             voice.channel_gain_left = amp_left;
                             voice.channel_gain_right = amp_right;
     
-                            voice.amp_envelope.trigger(); // Trigger amp envelope
                             voice.cutoff_envelope.trigger(); // Trigger cutoff envelope
                             voice.resonance_envelope.trigger(); // Trigger resonance envelope
     
@@ -412,7 +425,13 @@ impl Plugin for SubSynth {
                             voice.resonance_envelope.set_sustain(self.params.filter_res_sustain_ms.value()); // Set sustain level for resonance envelope
                             voice.resonance_envelope.set_release(self.params.filter_res_release_ms.value()); // Set release time for resonance envelope
                         }
-                        NoteEvent::NoteOff { timing: _, voice_id, channel, note, velocity: _ } => {
+                        NoteEvent::NoteOff {
+                            timing: _,
+                            voice_id,
+                            channel,
+                            note,
+                            velocity: _,
+                        } => {
                             self.start_release_for_voices(sample_rate, voice_id, channel, note);
     
                             if let Some(voice_idx) = self.get_voice_idx(voice_id) {
@@ -422,13 +441,21 @@ impl Plugin for SubSynth {
                                 voice.resonance_envelope.release();
                             }
                         }
-                        NoteEvent::Choke { timing, voice_id, channel, note } => {
+                        NoteEvent::Choke {
+                            timing,
+                            voice_id,
+                            channel,
+                            note,
+                        } => {
                             self.choke_voices(context, timing, voice_id, channel, note);
-                            self.voices.iter_mut().filter_map(|v| v.as_mut()).for_each(|voice| {
-                                voice.amp_envelope.release();
-                                voice.cutoff_envelope.release();
-                                voice.resonance_envelope.release();
-                            });
+                            self.voices
+                                .iter_mut()
+                                .filter_map(|v| v.as_mut())
+                                .for_each(|voice| {
+                                    voice.amp_envelope.release();
+                                    voice.cutoff_envelope.release();
+                                    voice.resonance_envelope.release();
+                                });
                         }
                         NoteEvent::MidiPitchBend {
                             timing,
@@ -442,14 +469,14 @@ impl Plugin for SubSynth {
                                 .iter_mut()
                                 .filter_map(|v| v.as_mut())
                                 .filter(|voice| voice.channel == channel);
-            
+    
                             for voice in channel_voices {
                                 // Calculate the pitch-bent phase delta
                                 let pitch_bent_phase_delta = voice.phase_delta
                                     * util::pitch_bend_semitones_to_ratio(pitch_bend)
                                     * util::midi_note_to_freq(voice.note)
                                     / sample_rate;
-            
+    
                                 // Update the phase delta for the voice
                                 voice.phase_delta = pitch_bent_phase_delta;
                             }
@@ -467,7 +494,7 @@ impl Plugin for SubSynth {
                                 .iter_mut()
                                 .filter_map(|v| v.as_mut())
                                 .filter(|voice| voice.channel == channel);
-            
+    
                             for voice in channel_voices {
                                 // Set the panning value for the voice
                                 voice.channel_panning = pan;
@@ -486,7 +513,7 @@ impl Plugin for SubSynth {
                                 .iter_mut()
                                 .filter_map(|v| v.as_mut())
                                 .filter(|voice| voice.channel == channel);
-            
+    
                             for voice in channel_voices {
                                 // Apply the tuning adjustment to the voice's frequency
                                 let tuning_multiplier = util::pitch_bend_semitones_to_ratio(tuning);
@@ -505,7 +532,6 @@ impl Plugin for SubSynth {
             }
         }
     }
-
     
     fn process_voices(
         &mut self,
@@ -592,13 +618,13 @@ impl Plugin for SubSynth {
         let mut block_end: usize = MAX_BLOCK_SIZE.min(num_samples);
     
         while block_start < num_samples {
-            self.process_events(self, context, block_start, block_end);
+            self.process_events(context, block_start, block_end);
     
             output[0][block_start..block_end].fill(0.0);
             output[1][block_start..block_end].fill(0.0);
     
             for voice in self.voices.iter_mut().filter_map(|v| v.as_mut()) {
-                self.process_voice(self, context, block_start, block_end, voice, &mut output);
+                self.process_voice(context, block_start, block_end, voice, &mut output);
             }
     
             // Move to the next block
@@ -608,6 +634,7 @@ impl Plugin for SubSynth {
     
         ProcessStatus::Normal
     }
+    
 }    
 
 impl SubSynth {
@@ -635,11 +662,15 @@ impl SubSynth {
             phase: 0.0,
             phase_delta: 0.0,
             releasing: false,
-            amp_envelope: Smoother::new(0.0, 0.0),
+            amp_envelope: ADSREnvelope::new(0.0,1.0, 0.25, 0.25),
 
             voice_gain: None,
-            cutoff_envelope: Smoother::new(0.0, 0.0),
-            resonance_envelope: Smoother::new(0.0, 0.0),
+            cutoff_envelope: ADSREnvelope::new(0.0,1.0, 0.25, 0.25),
+            resonance_envelope: ADSREnvelope::new(0.0,1.0, 0.25, 0.25),
+            cutoff: f32,
+            resonance: f32,
+            pitch_bend: f32,
+            
 
             filter: None,
         };
@@ -696,8 +727,10 @@ impl SubSynth {
                     || (channel == *candidate_channel && note == *candidate_note) =>
                 {
                     *releasing = true;
-                    amp_envelope.style = SmoothingStyle::Exponential(self.params.amp_release_ms.value());
-                    amp_envelope.set_target(sample_rate);
+                    let release_ms = self.params.amp_release_ms.value();
+                    let amp_envelope = ADSREnvelope::new(0.0, 0.0, 1.0, release_ms);
+                    voice.amp_envelope = amp_envelope;
+                    voice.amp_envelope.trigger();
                     if voice_id.is_some() {
                         return;
                     }

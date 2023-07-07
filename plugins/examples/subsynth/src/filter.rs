@@ -366,9 +366,9 @@ impl StatevariableFilter {
 
 impl Filter for StatevariableFilter {
     fn process(&mut self, input: f32) -> f32 {
-        let cutoff = self.cutoff * self.cutoff_envelope.get_value(self.cutoff_envelope.time);
+        let cutoff = self.cutoff * self.cutoff_envelope.get_value();
         let resonance =
-            self.resonance * self.resonance_envelope.get_value(self.resonance_envelope.time);
+            self.resonance * self.resonance_envelope.get_value();
 
         let f = cutoff / self.sample_rate;
         let k = 2.0 * (1.0 - resonance);
