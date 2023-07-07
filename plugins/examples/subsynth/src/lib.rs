@@ -2,6 +2,9 @@ mod waveform;
 mod editor;
 mod filter;
 
+use std::ops::Add;
+use std::ops::Mul;
+use std::ops::Sub;
 use nih_plug::prelude::*;
 use rand::Rng;
 use rand_pcg::Pcg32;
@@ -9,7 +12,8 @@ use std::sync::Arc;
 use waveform::Waveform;
 use waveform::generate_waveform;
 use filter::{NotchFilter, BandpassFilter, HighpassFilter, LowpassFilter, StatevariableFilter};
-use filter::{Filter, FilterType, FilterFactory};
+use filter::{Filter, FilterType, FilterFactory, Envelope};
+
 
 use filter::generate_filter;
 
@@ -20,6 +24,35 @@ const NUM_VOICES: u32 = 16;
 const MAX_BLOCK_SIZE: usize = 64;
 const GAIN_POLY_MOD_ID: u32 = 0;
 
+#[derive(Debug, Clone)]
+struct Smoother<T> {
+    value: T,
+    target: T,
+    time_constant: f32,
+}
+
+impl<T> Smoother<T>
+where
+    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<f32, Output = T>,
+{
+    pub fn new(value: T, time_constant: f32) -> Self {
+        Smoother {
+            value,
+            target: value,
+            time_constant,
+        }
+    }
+
+    pub fn set_target(&mut self, target: T) {
+        self.target = target;
+    }
+
+    pub fn next_value(&mut self, time: f32) -> T {
+        let alpha = (-1.0 / (time * self.time_constant)).exp();
+        self.value = self.value * alpha + self.target * (1.0 - alpha);
+        self.value
+    }
+}
 struct SubSynth {
     params: Arc<SubSynthParams>,
     prng: Pcg32,
@@ -40,7 +73,6 @@ struct SubSynthParams {
     amp_release_ms: FloatParam,
     #[id = "waveform"]
     waveform: EnumParam<Waveform>,
-
     // New parameters for ADSR envelope
     #[id = "amp_dec"]
     amp_decay_ms: FloatParam,
@@ -82,9 +114,12 @@ struct Voice {
     releasing: bool,
     amp_envelope: Smoother<f32>,
     voice_gain: Option<(f32, Smoother<f32>)>,
-    filter_cut_envelope: Smoother<f32>,
-    filter_res_envelope: Smoother<f32>,
+    cutoff: Option<(f32, Smoother<f32>)>,
+    cutoff_envelope: Smoother<f32>,
+    resonance: Option<(f32, Smoother<f32>)>,
+    resonance_envelope: Smoother<f32>,
     filter: Option<FilterType>,
+    pitch_bend: f32,
 
 }
 
@@ -326,6 +361,224 @@ impl Plugin for SubSynth {
         self.next_internal_voice_id = 0;
     }
 
+    fn process_events(
+        &mut self,
+        context: &mut impl ProcessContext<Self>,
+        block_start: usize,
+        block_end: usize,
+    ) {
+        let sample_rate = context.transport().sample_rate;
+        let mut next_event = context.next_event();
+    
+        'events: loop {
+            match next_event {
+                Some(event) if (event.timing() as usize) <= block_start => {
+                    match event {
+                        NoteEvent::NoteOn { timing, voice_id, channel, note, velocity } => {
+                            let initial_phase: f32 = self.prng.gen();
+                            // Calculate amplitude for each channel based on velocity and panning
+                            let amp_left = velocity as f32 * (1.0 - panning);
+                            let amp_right = velocity as f32 * panning;
+    
+                            let amp_envelope = Smoother::new(SmoothingStyle::Exponential(
+                                self.params.amp_attack_ms.value(),
+                            ));
+                            amp_envelope.reset(0.0);
+                            amp_envelope.set_target(sample_rate, 1.0);
+    
+                            // Start the voice and set parameters
+                            let voice = self.start_voice(context, timing, voice_id, channel, note);
+                            voice.velocity_sqrt = velocity.sqrt();
+                            voice.phase = initial_phase;
+                            voice.phase_delta = util::midi_note_to_freq(note) / sample_rate;
+                            voice.amp_envelope = amp_envelope;
+    
+                            // Set channel gains
+                            voice.channel_gain_left = amp_left;
+                            voice.channel_gain_right = amp_right;
+    
+                            voice.amp_envelope.trigger(); // Trigger amp envelope
+                            voice.cutoff_envelope.trigger(); // Trigger cutoff envelope
+                            voice.resonance_envelope.trigger(); // Trigger resonance envelope
+    
+                            // Set envelope and filter parameters
+                            voice.amp_envelope.set_target(sample_rate, amp_left); // Set target amplitude based on envelope
+                            voice.cutoff_envelope.set_attack(self.params.filter_cut_attack_ms.value()); // Set attack time for cutoff envelope
+                            voice.cutoff_envelope.set_decay(self.params.filter_cut_decay_ms.value()); // Set decay time for cutoff envelope
+                            voice.cutoff_envelope.set_sustain(self.params.filter_cut_sustain_ms.value()); // Set sustain level for cutoff envelope
+                            voice.cutoff_envelope.set_release(self.params.filter_cut_release_ms.value()); // Set release time for cutoff envelope
+                            voice.resonance_envelope.set_attack(self.params.filter_res_attack_ms.value()); // Set attack time for resonance envelope
+                            voice.resonance_envelope.set_decay(self.params.filter_res_decay_ms.value()); // Set decay time for resonance envelope
+                            voice.resonance_envelope.set_sustain(self.params.filter_res_sustain_ms.value()); // Set sustain level for resonance envelope
+                            voice.resonance_envelope.set_release(self.params.filter_res_release_ms.value()); // Set release time for resonance envelope
+                        }
+                        NoteEvent::NoteOff { timing: _, voice_id, channel, note, velocity: _ } => {
+                            self.start_release_for_voices(sample_rate, voice_id, channel, note);
+    
+                            if let Some(voice_idx) = self.get_voice_idx(voice_id) {
+                                let voice = self.voices[voice_idx].as_mut().unwrap();
+                                voice.amp_envelope.release();
+                                voice.cutoff_envelope.release();
+                                voice.resonance_envelope.release();
+                            }
+                        }
+                        NoteEvent::Choke { timing, voice_id, channel, note } => {
+                            self.choke_voices(context, timing, voice_id, channel, note);
+                            self.voices.iter_mut().filter_map(|v| v.as_mut()).for_each(|voice| {
+                                voice.amp_envelope.release();
+                                voice.cutoff_envelope.release();
+                                voice.resonance_envelope.release();
+                            });
+                        }
+                        NoteEvent::MidiPitchBend {
+                            timing,
+                            channel,
+                            value,
+                        } => {
+                            // Update pitch bend for all voices on the affected channel
+                            let pitch_bend = (value - 0.5) * midi_pitch_bend_range;
+                            let channel_voices = self
+                                .voices
+                                .iter_mut()
+                                .filter_map(|v| v.as_mut())
+                                .filter(|voice| voice.channel == channel);
+            
+                            for voice in channel_voices {
+                                // Calculate the pitch-bent phase delta
+                                let pitch_bent_phase_delta = voice.phase_delta
+                                    * util::pitch_bend_semitones_to_ratio(pitch_bend)
+                                    * util::midi_note_to_freq(voice.note)
+                                    / sample_rate;
+            
+                                // Update the phase delta for the voice
+                                voice.phase_delta = pitch_bent_phase_delta;
+                            }
+                        }
+                        NoteEvent::PolyPan {
+                            timing,
+                            voice_id: _,
+                            channel,
+                            note: _,
+                            pan,
+                        } => {
+                            // Update panning for all voices on the affected channel
+                            let channel_voices = self
+                                .voices
+                                .iter_mut()
+                                .filter_map(|v| v.as_mut())
+                                .filter(|voice| voice.channel == channel);
+            
+                            for voice in channel_voices {
+                                // Set the panning value for the voice
+                                voice.channel_panning = pan;
+                            }
+                        }
+                        NoteEvent::PolyTuning {
+                            timing,
+                            voice_id: _,
+                            channel,
+                            note: _,
+                            tuning,
+                        } => {
+                            // Update tuning for all voices on the affected channel
+                            let channel_voices = self
+                                .voices
+                                .iter_mut()
+                                .filter_map(|v| v.as_mut())
+                                .filter(|voice| voice.channel == channel);
+            
+                            for voice in channel_voices {
+                                // Apply the tuning adjustment to the voice's frequency
+                                let tuning_multiplier = util::pitch_bend_semitones_to_ratio(tuning);
+                                voice.phase_delta *= tuning_multiplier;
+                            }
+                        }
+                        _ => (),
+                    };
+    
+                    next_event = context.next_event();
+                }
+                Some(event) if (event.timing() as usize) < block_end => {
+                    break 'events;
+                }
+                _ => break 'events,
+            }
+        }
+    }
+
+    
+    fn process_voices(
+        &mut self,
+        block_start: usize,
+        block_end: usize,
+        output: &mut [f32; MAX_BLOCK_SIZE],
+        context: &impl ProcessContext<Self>,
+    ) {
+        let sample_rate = context.transport().sample_rate;
+        let panning = self.params.panning.value();
+    
+        let mut gain = [0.0; MAX_BLOCK_SIZE];
+        let mut voice_gain = [0.0; MAX_BLOCK_SIZE];
+        let mut voice_amp_envelope = [0.0; MAX_BLOCK_SIZE];
+        self.params.gain.smoothed.next_block(&mut gain, block_end - block_start);
+    
+        for voice in self.voices.iter_mut().filter_map(|v| v.as_mut()) {
+            let gain = match &voice.voice_gain {
+                Some((_, smoother)) => {
+                    smoother.next_block(&mut voice_gain, block_end - block_start);
+                    &voice_gain
+                }
+                None => &gain,
+            };
+    
+            voice
+                .amp_envelope
+                .next_block(&mut voice_amp_envelope, block_end - block_start);
+    
+            for (value_idx, sample_idx) in (block_start..block_end).enumerate() {
+                let amp = voice.velocity_sqrt * gain[value_idx] * voice_amp_envelope[value_idx];
+    
+                // Generate waveform
+                let waveform = self.params.waveform.value();
+                let generated_sample = generate_waveform(waveform, voice.phase) * amp;
+    
+                // Apply filter
+                let filter_type = self.params.filter_type.value();
+                let cutoff = self.params.filter_cut.value();
+                let resonance = self.params.filter_res.value();
+                let cutoff_envelope = voice.cutoff_envelope.get_next(sample_idx as f32);
+                let resonance_envelope = voice.resonance_envelope.get_next(sample_idx as f32);
+                let sample_rate = context.transport().sample_rate;
+    
+                let mut filtered_sample = generate_filter(
+                    filter_type,
+                    cutoff,
+                    cutoff_envelope,
+                    resonance,
+                    resonance_envelope,
+                    generated_sample,
+                    sample_rate,
+                );
+    
+                // Apply any other processing or effects to the filtered sample
+                // ...
+    
+                // Add the processed sample to the output buffer
+                output[0][sample_idx] += filtered_sample * voice.channel_gain_left;
+                output[1][sample_idx] += filtered_sample * voice.channel_gain_right;
+    
+                // Update the phase for the next sample
+                voice.phase += voice.phase_delta;
+                voice.phase -= voice.phase.floor();
+    
+                // Check if the voice has finished and release it if necessary
+                if voice.amp_envelope.is_released() {
+                    self.release_voice(context, voice);
+                }
+            }
+        }
+    }
+    
     fn process(
         &mut self,
         buffer: &mut Buffer,
@@ -333,226 +586,22 @@ impl Plugin for SubSynth {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let num_samples = buffer.samples();
-        let sample_rate = context.transport().sample_rate;
-        let output = buffer.as_slice();
+        let mut output = buffer.as_mut_slice();
     
-        let mut next_event = context.next_event();
         let mut block_start: usize = 0;
         let mut block_end: usize = MAX_BLOCK_SIZE.min(num_samples);
     
         while block_start < num_samples {
-            let this_sample_internal_voice_id_start = self.next_internal_voice_id;
+            self.process_events(self, context, block_start, block_end);
     
-            'events: loop {
-                match next_event {
-                    Some(event) if (event.timing() as usize) <= block_start => {
-                        match event {
-                            NoteEvent::NoteOn {
-                                timing,
-                                voice_id,
-                                channel,
-                                note,
-                                velocity,
-                            } => {
-                                let initial_phase: f32 = self.prng.gen();
-                                let amp_envelope = Smoother::new(SmoothingStyle::Exponential(
-                                    self.params.amp_attack_ms.value(),
-                                ));
-                                amp_envelope.reset(0.0);
-                                amp_envelope.set_target(sample_rate, 1.0);
-    
-                                let voice =
-                                    self.start_voice(context, timing, voice_id, channel, note);
-                                voice.velocity_sqrt = velocity.sqrt();
-                                voice.phase = initial_phase;
-                                voice.phase_delta = util::midi_note_to_freq(note) / sample_rate;
-                                voice.amp_envelope = amp_envelope;
-                            }
-                            NoteEvent::NoteOff {
-                                timing: _,
-                                voice_id,
-                                channel,
-                                note,
-                                velocity: _,
-                            } => {
-                                self.start_release_for_voices(sample_rate, voice_id, channel, note)
-                            }
-                            NoteEvent::Choke {
-                                timing,
-                                voice_id,
-                                channel,
-                                note,
-                            } => {
-                                self.choke_voices(context, timing, voice_id, channel, note);
-                            }
-                            NoteEvent::PolyModulation {
-                                timing: _,
-                                voice_id,
-                                poly_modulation_id,
-                                normalized_offset,
-                            } => {
-                                if let Some(voice_idx) = self.get_voice_idx(voice_id) {
-                                    let voice = self.voices[voice_idx].as_mut().unwrap();
-    
-                                    match poly_modulation_id {
-                                        GAIN_POLY_MOD_ID => {
-                                            let target_plain_value = self
-                                                .params
-                                                .gain
-                                                .preview_modulated(normalized_offset);
-                                            let (_, smoother) =
-                                                voice.voice_gain.get_or_insert_with(|| {
-                                                    (
-                                                        normalized_offset,
-                                                        self.params.gain.smoothed.clone(),
-                                                    )
-                                                });
-                                            if voice.internal_voice_id
-                                                >= this_sample_internal_voice_id_start
-                                            {
-                                                smoother.reset(target_plain_value);
-                                            } else {
-                                                smoother.set_target(sample_rate, target_plain_value);
-                                            }
-                                        }
-                                        n => nih_debug_assert_failure!(
-                                            "Polyphonic modulation sent for unknown poly modulation ID {}",
-                                            n
-                                        ),
-                                    }
-                                }
-                            }
-                            NoteEvent::MonoAutomation {
-                                timing: _,
-                                poly_modulation_id,
-                                normalized_value,
-                            } => {
-                                for voice in self.voices.iter_mut().filter_map(|v| v.as_mut()) {
-                                    match poly_modulation_id {
-                                        GAIN_POLY_MOD_ID => {
-                                            let (normalized_offset, smoother) =
-                                                match voice.voice_gain.as_mut() {
-                                                    Some((o, s)) => (o, s),
-                                                    None => continue,
-                                                };
-                                            let target_plain_value =
-                                                self.params.gain.preview_plain(
-                                                    normalized_value + *normalized_offset,
-                                                );
-                                            smoother.set_target(sample_rate, target_plain_value);
-                                        }
-                                        n => nih_debug_assert_failure!(
-                                            "Automation event sent for unknown poly modulation ID {}",
-                                            n
-                                        ),
-                                    }
-                                }
-                            }
-                            _ => (),
-                        };
-    
-                        next_event = context.next_event();
-                    }
-                    Some(event) if (event.timing() as usize) < block_end => {
-                        block_end = event.timing() as usize;
-                        break 'events;
-                    }
-                    _ => break 'events,
-                }
-            }
-    
-            // Clear output buffer
             output[0][block_start..block_end].fill(0.0);
             output[1][block_start..block_end].fill(0.0);
     
-            let block_len = block_end - block_start;
-            let mut gain = [0.0; MAX_BLOCK_SIZE];
-            let mut voice_gain = [0.0; MAX_BLOCK_SIZE];
-            let mut voice_amp_envelope = [0.0; MAX_BLOCK_SIZE];
-            self.params.gain.smoothed.next_block(&mut gain, block_len);
-    
-            // Process voices
             for voice in self.voices.iter_mut().filter_map(|v| v.as_mut()) {
-                let gain = match &voice.voice_gain {
-                    Some((_, smoother)) => {
-                        smoother.next_block(&mut voice_gain, block_len);
-                        &voice_gain
-                    }
-                    None => &gain,
-                };
-    
-                voice
-                    .amp_envelope
-                    .next_block(&mut voice_amp_envelope, block_len);
-    
-                
-                    for (value_idx, sample_idx) in (block_start..block_end).enumerate() {
-                        let amp = voice.velocity_sqrt * gain[value_idx] * voice_amp_envelope[value_idx];
-                    
-                        // Generate waveform
-                        let waveform = self.params.waveform.value();
-                        let generated_sample = generate_waveform(waveform, voice.phase) * amp;
-                    
-                        // Apply filter
-                        let filter_type = self.params.filter_type.value();
-                        let cutoff = self.params.filter_cut.value();
-                        let resonance = self.params.filter_res.value();
-                        let cutoff_attack = self.params.filter_cut_attack_ms.value();
-                        let cutoff_decay = self.params.filter_cut_decay_ms.value();
-                        let cutoff_sustain = self.params.filter_cut_sustain_ms.value();
-                        let cutoff_release = self.params.filter_cut_release_ms.value();
-                        let resonance_attack = self.params.filter_res_attack_ms.value();
-                        let resonance_decay = self.params.filter_res_decay_ms.value();
-                        let resonance_sustain = self.params.filter_res_sustain_ms.value();
-                        let resonance_release = self.params.filter_res_release_ms.value();
-                        let sample_rate = context.transport().sample_rate;
-                    
-                        let mut filtered_sample = generate_filter(
-                            filter_type,
-                            cutoff,
-                            resonance,
-                            cutoff_attack,
-                            cutoff_decay,
-                            cutoff_sustain,
-                            cutoff_release,
-                            resonance_attack,
-                            resonance_decay,
-                            resonance_sustain,
-                            resonance_release,
-                            generated_sample,
-                            sample_rate,
-                        );
-                        filtered_sample.set_sample_rate(sample_rate);
-                        let processed_sample = filtered_sample.process(generated_sample);
-                    
-                        // Update phase
-                        voice.phase += voice.phase_delta;
-                        if voice.phase >= 1.0 {
-                            voice.phase -= 1.0;
-                        }
-                    
-                        output[0][sample_idx] += processed_sample;
-                        output[1][sample_idx] += processed_sample;
-                    }
-                    
-                    
-            }
-            // Process voice release and termination
-            for voice in self.voices.iter_mut() {
-                match voice {
-                    Some(v) if v.releasing && v.amp_envelope.previous_value() == 0.0 => {
-                        context.send_event(NoteEvent::VoiceTerminated {
-                            timing: block_end as u32,
-                            voice_id: Some(v.voice_id),
-                            channel: v.channel,
-                            note: v.note,
-                        });
-                        *voice = None;
-                    }
-                    _ => (),
-                }
+                self.process_voice(self, context, block_start, block_end, voice, &mut output);
             }
     
+            // Move to the next block
             block_start = block_end;
             block_end = (block_start + MAX_BLOCK_SIZE).min(num_samples);
         }
@@ -586,11 +635,11 @@ impl SubSynth {
             phase: 0.0,
             phase_delta: 0.0,
             releasing: false,
-            amp_envelope: Smoother::none(),
+            amp_envelope: Smoother::new(0.0, 0.0),
 
             voice_gain: None,
-            filter_cut_envelope: Smoother::new(SmoothingStyle::Linear(0.0)),
-            filter_res_envelope: Smoother::new(SmoothingStyle::Linear(0.0)),
+            cutoff_envelope: Smoother::new(0.0, 0.0),
+            resonance_envelope: Smoother::new(0.0, 0.0),
 
             filter: None,
         };
@@ -610,11 +659,12 @@ impl SubSynth {
                 };
                 {
                     let oldest_voice = oldest_voice.as_ref().unwrap();
-                    context.send_event(NoteEvent::VoiceTerminated {
+                    context.send_event(NoteEvent::NoteOff {
                         timing: sample_offset,
                         voice_id: Some(oldest_voice.voice_id),
                         channel: oldest_voice.channel,
                         note: oldest_voice.note,
+                        velocity: 0.0,
                     });
                 }
 
@@ -639,14 +689,15 @@ impl SubSynth {
                     note: candidate_note,
                     releasing,
                     amp_envelope,
+                    cutoff_envelope,
+                    resonance_envelope,
                     ..
                 }) if voice_id == Some(*candidate_voice_id)
                     || (channel == *candidate_channel && note == *candidate_note) =>
                 {
                     *releasing = true;
-                    amp_envelope.style =
-                        SmoothingStyle::Exponential(self.params.amp_release_ms.value());
-                    amp_envelope.set_target(sample_rate, 0.0);
+                    amp_envelope.style = SmoothingStyle::Exponential(self.params.amp_release_ms.value());
+                    amp_envelope.set_target(sample_rate);
                     if voice_id.is_some() {
                         return;
                     }
@@ -674,11 +725,12 @@ impl SubSynth {
                 }) if voice_id == Some(*candidate_voice_id)
                     || (channel == *candidate_channel && note == *candidate_note) =>
                 {
-                    context.send_event(NoteEvent::VoiceTerminated {
+                    context.send_event(NoteEvent::NoteOff {
                         timing: sample_offset,
                         voice_id: Some(*candidate_voice_id),
                         channel,
                         note,
+                        velocity: 0.0,
                     });
                     *voice = None;
 
@@ -690,10 +742,10 @@ impl SubSynth {
             }
         }
     }
+    
     fn waveform(&self) -> Waveform {
         self.params.waveform.value()
     }
-    
 }
 
 const fn compute_fallback_voice_id(note: u8, channel: u8) -> i32 {
