@@ -77,13 +77,13 @@ struct SubSynthParams {
     #[id = "amp_dec"]
     amp_decay_ms: FloatParam,
     #[id = "amp_sus"]
-    amp_sustain_ms: FloatParam,
+    amp_sustain: FloatParam,
     #[id = "filter_cut_atk"]
     filter_cut_attack_ms: FloatParam,
     #[id = "filter_cut_dec"]
     filter_cut_decay_ms: FloatParam,
     #[id = "filter_cut_sus"]
-    filter_cut_sustain_ms: FloatParam,
+    filter_cut_sustain: FloatParam,
     #[id = "filter_cut_rel"]
     filter_cut_release_ms: FloatParam,
     #[id = "filter_res_atk"]
@@ -91,7 +91,7 @@ struct SubSynthParams {
     #[id = "filter_res_dec"]
     filter_res_decay_ms: FloatParam,
     #[id = "filter_res_sus"]
-    filter_res_sustain_ms: FloatParam,
+    filter_res_sustain: FloatParam,
     #[id = "filter_res_rel"]
     filter_res_release_ms: FloatParam,
     #[id = "filter_type"]
@@ -103,25 +103,27 @@ struct SubSynthParams {
 }
 
 #[derive(Debug, Clone)]
-struct Voice {
+pub struct Voice {
     voice_id: i32,
+    internal_voice_id: u32,
     channel: u8,
     note: u8,
-    internal_voice_id: u64,
     velocity_sqrt: f32,
+    voice_gain: Option<(f32, Smoother<f32>)>,
     phase: f32,
     phase_delta: f32,
     releasing: bool,
-    amp_envelope: Smoother<f32>,
-    voice_gain: Option<(f32, Smoother<f32>)>,
-    cutoff: Option<(f32, Smoother<f32>)>,
+    amp_envelope: ADSREnvelope,
+    channel_gain_left: f32, // Added field
+    channel_gain_right: f32, // Added field
     cutoff_envelope: ADSREnvelope,
-    resonance: Option<(f32, Smoother<f32>)>,
     resonance_envelope: ADSREnvelope,
-    filter: Option<FilterType>,
+    cutoff: Option<(f32, Smoother<f32>)>,
+    resonance: Option<(f32, Smoother<f32>)>,
     pitch_bend: f32,
-
+    filter: Option<Filter>,
 }
+
 
 
 impl Default for SubSynth {
@@ -188,7 +190,7 @@ impl Default for SubSynthParams {
             )
             .with_step_size(0.1)
             .with_unit(" ms"),
-            amp_sustain_ms: FloatParam::new(
+            amp_sustain: FloatParam::new(
                 "Sustain",
                 1000.0,
                 FloatRange::Skewed {
@@ -217,7 +219,7 @@ impl Default for SubSynthParams {
                     max: 1.0,
                 },
             )
-            .with_unit(""),
+            .with_unit(" Q"),
             filter_cut_attack_ms: FloatParam::new(
                 "Filter Cut Attack",
                 200.0,
@@ -240,17 +242,17 @@ impl Default for SubSynthParams {
             )
             .with_step_size(0.1)
             .with_unit(" ms"),
-            filter_cut_sustain_ms: FloatParam::new(
+            filter_cut_sustain: FloatParam::new(
                 "Filter Cut Sustain",
                 1000.0,
                 FloatRange::Skewed {
-                    min: 0.0,
-                    max: 5000.0,
+                    min: -1.0,
+                    max: 1.0,
                     factor: FloatRange::skew_factor(-1.0),
                 },
             )
-            .with_step_size(0.1)
-            .with_unit(" ms"),
+            .with_step_size(0.01)
+            .with_unit(" +/-"),
             filter_cut_release_ms: FloatParam::new(
                 "Filter Cut Release",
                 100.0,
@@ -284,17 +286,17 @@ impl Default for SubSynthParams {
             )
             .with_step_size(0.1)
             .with_unit(" ms"),
-            filter_res_sustain_ms: FloatParam::new(
+            filter_res_sustain: FloatParam::new(
                 "Filter Resonance Sustain",
                 1000.0,
                 FloatRange::Skewed {
-                    min: 0.0,
-                    max: 5000.0,
+                    min: -1.0,
+                    max: 1.0,
                     factor: FloatRange::skew_factor(-1.0),
                 },
             )
-            .with_step_size(0.1)
-            .with_unit(" ms"),
+            .with_step_size(0.01)
+            .with_unit("+/-1"),
             filter_res_release_ms: FloatParam::new(
                 "Filter Resonance Decay",
                 200.0,
@@ -361,6 +363,91 @@ impl Plugin for SubSynth {
         self.next_internal_voice_id = 0;
     }
 
+}
+    
+   
+    
+
+
+impl SubSynth {
+    fn get_voice_idx(&mut self, voice_id: i32) -> Option<usize> {
+        self.voices
+            .iter_mut()
+            .position(|voice| matches!(voice, Some(voice) if voice.voice_id == voice_id))
+    }
+
+    fn start_voice(
+        &mut self,
+        context: &mut impl ProcessContext<Self>,
+        sample_offset: u32,
+        voice_id: Option<i32>,
+        channel: u8,
+        note: u8,
+    ) -> &mut Voice {
+        let params = self.params.as_ref();
+        let new_voice = Voice {
+            voice_id: voice_id.unwrap_or_else(|| compute_fallback_voice_id(note, channel)),
+            internal_voice_id: self.next_internal_voice_id,
+            channel,
+            note,
+            velocity_sqrt: 1.0,
+            voice_gain,
+            phase: 0.0,
+            phase_delta: 0.0,
+            releasing: false,
+            amp_envelope: ADSREnvelope::new(0.0,1.0, 0.25, 0.25),
+            channel_gain_left: voice_gain * (1.0 - params.channel_panning.value()) * (1.0 - params.panning.value()),
+            channel_gain_right: voice_gain * params.channel_panning.value() * params.panning.value(),
+
+            cutoff_envelope: ADSREnvelope::new(
+                params.filter_cut_attack_ms.value(),
+                params.filter_cut_decay_ms.value(),
+                params.filter_cut_sustain.value(),
+                params.filter_cut_release_ms.value(),
+            ),
+            resonance_envelope: ADSREnvelope::new(
+                params.filter_res_attack_ms.value(),
+                params.filter_res_decay_ms.value(),
+                params.filter_res_sustain.value(),
+                params.filter_res_release_ms.value(),
+            ),
+
+            cutoff: Some((params.filter_cut.value(), Smoother::new(0.0, 0.0))),,
+            resonance: Some((params.filter_res.value(), Smoother::new(0.0, 0.0))),
+            pitch_bend: f32,
+
+            filter: None,
+        };
+        self.next_internal_voice_id = self.next_internal_voice_id.wrapping_add(1);
+
+        match self.voices.iter().position(|voice| voice.is_none()) {
+            Some(free_voice_idx) => {
+                self.voices[free_voice_idx] = Some(new_voice);
+                return self.voices[free_voice_idx].as_mut().unwrap();
+            }
+            None => {
+                let oldest_voice = unsafe {
+                    self.voices
+                        .iter_mut()
+                        .min_by_key(|voice| voice.as_ref().unwrap_unchecked().internal_voice_id)
+                        .unwrap_unchecked()
+                };
+                {
+                    let oldest_voice = oldest_voice.as_ref().unwrap();
+                    context.send_event(NoteEvent::NoteOff {
+                        timing: sample_offset,
+                        voice_id: Some(oldest_voice.voice_id),
+                        channel: oldest_voice.channel,
+                        note: oldest_voice.note,
+                        velocity: 0.0,
+                    });
+                }
+
+                *oldest_voice = Some(new_voice);
+                return oldest_voice.as_mut().unwrap();
+            }
+        }
+    }
     pub fn process_events(
         &mut self,
         context: &mut impl ProcessContext<Self>,
@@ -369,6 +456,9 @@ impl Plugin for SubSynth {
     ) {
         let sample_rate = context.transport().sample_rate;
         let mut next_event = context.next_event();
+    
+        // Dereference self.params once
+        let params = self.params.as_ref();
     
         'events: loop {
             match next_event {
@@ -385,15 +475,21 @@ impl Plugin for SubSynth {
                             // Calculate amplitude for each channel based on velocity and panning
                             let amp_left = velocity as f32 * (1.0 - voice.channel_panning);
                             let amp_right = velocity as f32 * voice.channel_panning;
-    
-                            let amp_envelope = ADSREnvelope::new(
-                                self.params.amp_attack_ms.value(),
-                                self.params.amp_decay_ms.value(),
-                                self.params.amp_sustain.value(),
-                                self.params.amp_release_ms.value(),
+
+                            let mut amp_envelope = ADSREnvelope::new(
+                                params.amp_attack_ms.value(),
+                                params.amp_decay_ms.value(),
+                                params.amp_sustain.value(),
+                                params.amp_release_ms.value(),
                             );
                             amp_envelope.trigger();
-    
+
+                            amp_envelope.next_block(&mut voice_amp_envelope, block_end - block_start);
+                            let amp_envelope_left = voice_amp_envelope;
+
+                            amp_envelope.next_block(&mut voice_amp_envelope, block_end - block_start);
+                            let amp_envelope_right = voice_amp_envelope;
+
                             // Start the voice and set parameters
                             let voice = self.start_voice(
                                 context,
@@ -401,126 +497,42 @@ impl Plugin for SubSynth {
                                 voice_id,
                                 channel,
                                 note,
-                                amp_envelope,
                             );
                             voice.velocity_sqrt = velocity.sqrt();
                             voice.phase = initial_phase;
                             voice.phase_delta = util::midi_note_to_freq(note) / sample_rate;
-    
+
                             // Set channel gains
-                            voice.channel_gain_left = amp_left;
-                            voice.channel_gain_right = amp_right;
-    
+                            voice.channel_gain_left = match &voice.voice_gain {
+                                Some((value, _)) => value * amp_left * amp_envelope_left,
+                                None => 0.0, // Handle the case when voice.voice_gain is None
+                            };
+                            
+                            voice.channel_gain_right = match &voice.voice_gain {
+                                Some((value, _)) => value * amp_right * amp_envelope_right,
+                                None => 0.0, // Handle the case when voice.voice_gain is None
+                            };
+                            
+
                             voice.cutoff_envelope.trigger(); // Trigger cutoff envelope
                             voice.resonance_envelope.trigger(); // Trigger resonance envelope
+
+                            // Set envelope and filter parameters
+                            // ...
+
     
                             // Set envelope and filter parameters
                             voice.amp_envelope.set_target(sample_rate, amp_left); // Set target amplitude based on envelope
-                            voice.cutoff_envelope.set_attack(self.params.filter_cut_attack_ms.value()); // Set attack time for cutoff envelope
-                            voice.cutoff_envelope.set_decay(self.params.filter_cut_decay_ms.value()); // Set decay time for cutoff envelope
-                            voice.cutoff_envelope.set_sustain(self.params.filter_cut_sustain_ms.value()); // Set sustain level for cutoff envelope
-                            voice.cutoff_envelope.set_release(self.params.filter_cut_release_ms.value()); // Set release time for cutoff envelope
-                            voice.resonance_envelope.set_attack(self.params.filter_res_attack_ms.value()); // Set attack time for resonance envelope
-                            voice.resonance_envelope.set_decay(self.params.filter_res_decay_ms.value()); // Set decay time for resonance envelope
-                            voice.resonance_envelope.set_sustain(self.params.filter_res_sustain_ms.value()); // Set sustain level for resonance envelope
-                            voice.resonance_envelope.set_release(self.params.filter_res_release_ms.value()); // Set release time for resonance envelope
+                            voice.cutoff_envelope.set_attack(params.filter_cut_attack_ms.value()); // Set attack time for cutoff envelope
+                            voice.cutoff_envelope.set_decay(params.filter_cut_decay_ms.value()); // Set decay time for cutoff envelope
+                            voice.cutoff_envelope.set_sustain(params.filter_cut_sustain.value()); // Set sustain level for cutoff envelope
+                            voice.cutoff_envelope.set_release(params.filter_cut_release_ms.value()); // Set release time for cutoff envelope
+                            voice.resonance_envelope.set_attack(params.filter_res_attack_ms.value()); // Set attack time for resonance envelope
+                            voice.resonance_envelope.set_decay(params.filter_res_decay_ms.value()); // Set decay time for resonance envelope
+                            voice.resonance_envelope.set_sustain(params.filter_res_sustain.value()); // Set sustain level for resonance envelope
+                            voice.resonance_envelope.set_release(params.filter_res_release_ms.value()); // Set release time for resonance envelope
                         }
-                        NoteEvent::NoteOff {
-                            timing: _,
-                            voice_id,
-                            channel,
-                            note,
-                            velocity: _,
-                        } => {
-                            self.start_release_for_voices(sample_rate, voice_id, channel, note);
-    
-                            if let Some(voice_idx) = self.get_voice_idx(voice_id) {
-                                let voice = self.voices[voice_idx].as_mut().unwrap();
-                                voice.amp_envelope.release();
-                                voice.cutoff_envelope.release();
-                                voice.resonance_envelope.release();
-                            }
-                        }
-                        NoteEvent::Choke {
-                            timing,
-                            voice_id,
-                            channel,
-                            note,
-                        } => {
-                            self.choke_voices(context, timing, voice_id, channel, note);
-                            self.voices
-                                .iter_mut()
-                                .filter_map(|v| v.as_mut())
-                                .for_each(|voice| {
-                                    voice.amp_envelope.release();
-                                    voice.cutoff_envelope.release();
-                                    voice.resonance_envelope.release();
-                                });
-                        }
-                        NoteEvent::MidiPitchBend {
-                            timing,
-                            channel,
-                            value,
-                        } => {
-                            // Update pitch bend for all voices on the affected channel
-                            let pitch_bend = (value - 0.5) * midi_pitch_bend_range;
-                            let channel_voices = self
-                                .voices
-                                .iter_mut()
-                                .filter_map(|v| v.as_mut())
-                                .filter(|voice| voice.channel == channel);
-    
-                            for voice in channel_voices {
-                                // Calculate the pitch-bent phase delta
-                                let pitch_bent_phase_delta = voice.phase_delta
-                                    * util::pitch_bend_semitones_to_ratio(pitch_bend)
-                                    * util::midi_note_to_freq(voice.note)
-                                    / sample_rate;
-    
-                                // Update the phase delta for the voice
-                                voice.phase_delta = pitch_bent_phase_delta;
-                            }
-                        }
-                        NoteEvent::PolyPan {
-                            timing,
-                            voice_id: _,
-                            channel,
-                            note: _,
-                            pan,
-                        } => {
-                            // Update panning for all voices on the affected channel
-                            let channel_voices = self
-                                .voices
-                                .iter_mut()
-                                .filter_map(|v| v.as_mut())
-                                .filter(|voice| voice.channel == channel);
-    
-                            for voice in channel_voices {
-                                // Set the panning value for the voice
-                                voice.channel_panning = pan;
-                            }
-                        }
-                        NoteEvent::PolyTuning {
-                            timing,
-                            voice_id: _,
-                            channel,
-                            note: _,
-                            tuning,
-                        } => {
-                            // Update tuning for all voices on the affected channel
-                            let channel_voices = self
-                                .voices
-                                .iter_mut()
-                                .filter_map(|v| v.as_mut())
-                                .filter(|voice| voice.channel == channel);
-    
-                            for voice in channel_voices {
-                                // Apply the tuning adjustment to the voice's frequency
-                                let tuning_multiplier = util::pitch_bend_semitones_to_ratio(tuning);
-                                voice.phase_delta *= tuning_multiplier;
-                            }
-                        }
-                        _ => (),
+                        // ... other event cases ...
                     };
     
                     next_event = context.next_event();
@@ -532,7 +544,6 @@ impl Plugin for SubSynth {
             }
         }
     }
-    
     fn process_voices(
         &mut self,
         block_start: usize,
@@ -624,7 +635,7 @@ impl Plugin for SubSynth {
             output[1][block_start..block_end].fill(0.0);
     
             for voice in self.voices.iter_mut().filter_map(|v| v.as_mut()) {
-                self.process_voice(context, block_start, block_end, voice, &mut output);
+                self.process_voices(context, block_start, block_end, voice, &mut output);
             }
     
             // Move to the next block
@@ -635,79 +646,9 @@ impl Plugin for SubSynth {
         ProcessStatus::Normal
     }
     
-}    
-
-impl SubSynth {
-    fn get_voice_idx(&mut self, voice_id: i32) -> Option<usize> {
-        self.voices
-            .iter_mut()
-            .position(|voice| matches!(voice, Some(voice) if voice.voice_id == voice_id))
-    }
-
-    fn start_voice(
-        &mut self,
-        context: &mut impl ProcessContext<Self>,
-        sample_offset: u32,
-        voice_id: Option<i32>,
-        channel: u8,
-        note: u8,
-    ) -> &mut Voice {
-        let new_voice = Voice {
-            voice_id: voice_id.unwrap_or_else(|| compute_fallback_voice_id(note, channel)),
-            internal_voice_id: self.next_internal_voice_id,
-            channel,
-            note,
-            velocity_sqrt: 1.0,
-
-            phase: 0.0,
-            phase_delta: 0.0,
-            releasing: false,
-            amp_envelope: ADSREnvelope::new(0.0,1.0, 0.25, 0.25),
-
-            voice_gain: None,
-            cutoff_envelope: ADSREnvelope::new(0.0,1.0, 0.25, 0.25),
-            resonance_envelope: ADSREnvelope::new(0.0,1.0, 0.25, 0.25),
-            cutoff: f32,
-            resonance: f32,
-            pitch_bend: f32,
-            
-
-            filter: None,
-        };
-        self.next_internal_voice_id = self.next_internal_voice_id.wrapping_add(1);
-
-        match self.voices.iter().position(|voice| voice.is_none()) {
-            Some(free_voice_idx) => {
-                self.voices[free_voice_idx] = Some(new_voice);
-                return self.voices[free_voice_idx].as_mut().unwrap();
-            }
-            None => {
-                let oldest_voice = unsafe {
-                    self.voices
-                        .iter_mut()
-                        .min_by_key(|voice| voice.as_ref().unwrap_unchecked().internal_voice_id)
-                        .unwrap_unchecked()
-                };
-                {
-                    let oldest_voice = oldest_voice.as_ref().unwrap();
-                    context.send_event(NoteEvent::NoteOff {
-                        timing: sample_offset,
-                        voice_id: Some(oldest_voice.voice_id),
-                        channel: oldest_voice.channel,
-                        note: oldest_voice.note,
-                        velocity: 0.0,
-                    });
-                }
-
-                *oldest_voice = Some(new_voice);
-                return oldest_voice.as_mut().unwrap();
-            }
-        }
-    }
-
     fn start_release_for_voices(
         &mut self,
-        sample_rate: f32,
+        _sample_rate: f32,
         voice_id: Option<i32>,
         channel: u8,
         note: u8,
@@ -727,10 +668,12 @@ impl SubSynth {
                     || (channel == *candidate_channel && note == *candidate_note) =>
                 {
                     *releasing = true;
-                    let release_ms = self.params.amp_release_ms.value();
-                    let amp_envelope = ADSREnvelope::new(0.0, 0.0, 1.0, release_ms);
-                    voice.amp_envelope = amp_envelope;
-                    voice.amp_envelope.trigger();
+                    amp_envelope.release();
+    
+                    // Trigger cutoff and resonance release envelopes
+                    cutoff_envelope.release();
+                    resonance_envelope.release();
+    
                     if voice_id.is_some() {
                         return;
                     }
@@ -739,7 +682,8 @@ impl SubSynth {
             }
         }
     }
-
+    
+    
     fn choke_voices(
         &mut self,
         context: &mut impl ProcessContext<Self>,
@@ -754,6 +698,9 @@ impl SubSynth {
                     voice_id: candidate_voice_id,
                     channel: candidate_channel,
                     note: candidate_note,
+                    amp_envelope,
+                    cutoff_envelope,
+                    resonance_envelope,
                     ..
                 }) if voice_id == Some(*candidate_voice_id)
                     || (channel == *candidate_channel && note == *candidate_note) =>
@@ -765,8 +712,14 @@ impl SubSynth {
                         note,
                         velocity: 0.0,
                     });
+    
+                    // Trigger cutoff and resonance release envelopes
+                    amp_envelope.release();
+                    cutoff_envelope.release();
+                    resonance_envelope.release();
+    
                     *voice = None;
-
+    
                     if voice_id.is_some() {
                         return;
                     }
@@ -775,6 +728,7 @@ impl SubSynth {
             }
         }
     }
+    
     
     fn waveform(&self) -> Waveform {
         self.params.waveform.value()

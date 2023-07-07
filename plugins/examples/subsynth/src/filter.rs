@@ -51,6 +51,50 @@ impl ADSREnvelope {
     pub fn set_release(&mut self, release: f32) {
         self.release = release;
     }
+    pub fn is_sustain(&self) -> bool {
+        self.state == ADSREnvelopeState::Sustain
+    }
+
+    pub fn is_attack(&self) -> bool {
+        self.state == ADSREnvelopeState::Attack
+    }
+
+    pub fn is_decay(&self) -> bool {
+        self.state == ADSREnvelopeState::Decay
+    }
+
+    pub fn is_released(&self) -> bool {
+        self.state == ADSREnvelopeState::Release || self.state == ADSREnvelopeState::Idle
+    }
+    pub fn set_target(&mut self, sample_rate: f32, target_amplitude: f32) {
+        // Calculate the time required to reach the target amplitude
+        let time_to_target = (target_amplitude - self.get_value(0.0)).abs() / (target_amplitude.abs() * sample_rate);
+
+        // Set the attack, decay, and release times based on the time to target
+        let attack_time = time_to_target * self.attack;
+        let decay_time = time_to_target * self.decay;
+        let release_time = time_to_target * self.release;
+
+        // Update the envelope state and time
+        self.state = ADSREnvelopeState::Idle;
+        self.time = 0.0;
+
+        // If the target amplitude is higher than the current amplitude, start the attack phase
+        if target_amplitude > self.get_value(0.0) {
+            self.state = ADSREnvelopeState::Attack;
+            self.time = attack_time;
+        }
+        // If the target amplitude is lower than the sustain level, start the decay phase
+        else if target_amplitude < self.sustain {
+            self.state = ADSREnvelopeState::Decay;
+            self.time = decay_time;
+        }
+        // If the target amplitude is zero, start the release phase
+        else if target_amplitude == 0.0 {
+            self.state = ADSREnvelopeState::Release;
+            self.time = release_time;
+        }
+    }
 }
 
 impl Envelope for ADSREnvelope {
