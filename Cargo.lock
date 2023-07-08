@@ -1269,26 +1269,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enum-iterator"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7add3873b5dd076766ee79c8e406ad1a472c385476b9e38849f8eec24f1be689"
-dependencies = [
- "enum-iterator-derive",
-]
-
-[[package]]
-name = "enum-iterator-derive"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eecf8589574ce9b895052fa12d69af7a233f99e6107f5cb8dd1044f2a17bfdcb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.15",
-]
-
-[[package]]
 name = "epaint"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1940,17 +1920,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fed44880c466736ef9a5c5b5facefb5ed0785676d0c02d612db14e54f0d84286"
 
 [[package]]
+name = "iced_audio"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abcc23005d4d2c731972bac12a91c78c48be4ef96692db71c2df765a07dc0d36"
+dependencies = [
+ "iced_graphics 0.3.1",
+ "iced_native 0.5.1",
+]
+
+[[package]]
 name = "iced_baseview"
 version = "0.0.3"
 source = "git+https://github.com/robbert-vdh/iced_baseview.git?branch=feature/update-baseview#07f1b07d3a8bf2a9af0ce6ee57443105ac99de33"
 dependencies = [
  "baseview 0.1.0 (git+https://github.com/RustAudio/baseview.git)",
  "copypasta 0.7.1",
- "iced_core",
- "iced_futures",
+ "iced_core 0.4.0",
+ "iced_futures 0.3.0",
  "iced_glow",
- "iced_graphics",
- "iced_native",
+ "iced_graphics 0.2.0",
+ "iced_native 0.4.0",
  "keyboard-types",
  "raw-window-handle 0.4.3",
 ]
@@ -1962,6 +1952,16 @@ source = "git+https://github.com/iced-rs/iced.git?rev=a53fa91e0ddf374bbeb66d5e83
 dependencies = [
  "bitflags",
  "palette",
+ "wasm-timer",
+]
+
+[[package]]
+name = "iced_core"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf9133ceb345ec640047d5597fb8aa88e9cf74ce2d0277a9a62e2d6ed4a8148"
+dependencies = [
+ "bitflags",
  "wasm-timer",
 ]
 
@@ -1980,6 +1980,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "iced_futures"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13d13241d5ed32846bbcffaf60e27e7ceebb60cf16d791ff00d582f0d4d1b07b"
+dependencies = [
+ "futures",
+ "log",
+ "wasm-bindgen-futures",
+ "wasm-timer",
+]
+
+[[package]]
 name = "iced_glow"
 version = "0.2.0"
 source = "git+https://github.com/iced-rs/iced.git?rev=a53fa91e0ddf374bbeb66d5e831b79127ed47a9d#a53fa91e0ddf374bbeb66d5e831b79127ed47a9d"
@@ -1989,8 +2001,8 @@ dependencies = [
  "glow 0.11.2",
  "glow_glyph",
  "glyph_brush",
- "iced_graphics",
- "iced_native",
+ "iced_graphics 0.2.0",
+ "iced_native 0.4.0",
  "log",
 ]
 
@@ -2002,10 +2014,25 @@ dependencies = [
  "bytemuck",
  "font-kit",
  "glam",
- "iced_native",
- "iced_style",
+ "iced_native 0.4.0",
+ "iced_style 0.3.0",
  "lyon",
  "qrcode",
+ "raw-window-handle 0.4.3",
+ "thiserror",
+]
+
+[[package]]
+name = "iced_graphics"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2adcf703fc326e0985ea99c75f1b73e718560a7b220d57ec6478417ccb2f463f"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "iced_native 0.5.1",
+ "iced_style 0.4.0",
+ "lyon",
  "raw-window-handle 0.4.3",
  "thiserror",
 ]
@@ -2015,9 +2042,23 @@ name = "iced_native"
 version = "0.4.0"
 source = "git+https://github.com/iced-rs/iced.git?rev=a53fa91e0ddf374bbeb66d5e831b79127ed47a9d#a53fa91e0ddf374bbeb66d5e831b79127ed47a9d"
 dependencies = [
- "iced_core",
- "iced_futures",
- "iced_style",
+ "iced_core 0.4.0",
+ "iced_futures 0.3.0",
+ "iced_style 0.3.0",
+ "num-traits",
+ "twox-hash",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "iced_native"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ca174d4693a5daa2ffcae38d5c28cf0dbd54bd8fc19848f28392cd52624751a"
+dependencies = [
+ "iced_core 0.5.0",
+ "iced_futures 0.4.1",
+ "iced_style 0.4.0",
  "num-traits",
  "twox-hash",
  "unicode-segmentation",
@@ -2028,7 +2069,16 @@ name = "iced_style"
 version = "0.3.0"
 source = "git+https://github.com/iced-rs/iced.git?rev=a53fa91e0ddf374bbeb66d5e831b79127ed47a9d#a53fa91e0ddf374bbeb66d5e831b79127ed47a9d"
 dependencies = [
- "iced_core",
+ "iced_core 0.4.0",
+]
+
+[[package]]
+name = "iced_style"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a90028c94ab62c13cd3b6fb1499a593a51510d4729c5b4e8e60705b2b28c6bc2"
+dependencies = [
+ "iced_core 0.5.0",
 ]
 
 [[package]]
@@ -3765,16 +3815,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinesynth"
-version = "0.1.0"
-dependencies = [
- "enum-iterator",
- "nih_plug",
- "rand 0.8.5",
- "rand_pcg 0.3.1",
-]
-
-[[package]]
 name = "siphasher"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3909,11 +3949,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
 
 [[package]]
+<<<<<<< HEAD
+<<<<<<< HEAD
 name = "subsynth"
 version = "0.1.0"
 dependencies = [
  "atomic_float",
  "enum-iterator",
+ "iced_audio",
  "nih_plug",
  "nih_plug_iced",
  "rand 0.8.5",
@@ -3921,6 +3964,10 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> parent of 0d2854e (Ling)
+=======
+>>>>>>> parent of 0d2854e (Ling)
 name = "swash"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
